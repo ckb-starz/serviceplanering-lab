@@ -194,13 +194,24 @@ function renderBoard(){if(!board||!$('board-grid'))return;
  document.body.classList.toggle('present-detail',presenting&&presentationMode==='detail');
  document.body.classList.toggle('present-overview',presenting&&presentationMode==='overview');const cols=focusedColumn?columns.filter(c=>c.id===focusedColumn):columns;const root=$('board-grid'),outer=$('board');outer.classList.toggle('focus',Boolean(focusedColumn));root.style.setProperty('--cols',String(Math.max(1,cols.length)));
  if(presenting&&presentationMode==='overview'){
-   // Väg radens höjd efter hur många lappar den tätaste rutan innehåller.
-   const cellWidth=Math.max(170,(window.innerWidth-155)/Math.max(cols.length,1));
-   const cardsPerLine=Math.max(1,Math.floor(cellWidth/280));
-   const weights=rows.map(r=>Math.max(1,...cols.map(c=>Math.ceil(cards.filter(x=>x.row_id===r.id&&x.column_id===c.id).length/cardsPerLine))));
-   root.style.gridTemplateRows='52px '+weights.map(n=>`minmax(${Math.max(92,n*44+24)}px,${Math.max(1,n)}fr)`).join(' ');
-   const dense=Math.max(...weights,1);
-   root.style.setProperty('--presentation-note-font',`${dense>9?12:dense>5?14:16}px`);
+   // Håll alla lappar under varandra, inte i ett rutnät bredvid varandra.
+   // Beräkna en läsbar kortstorlek utifrån hur många kort som faktiskt ska visas.
+   const mobile=window.matchMedia('(max-width:650px)').matches;
+   const maxPerRow=rows.map(r=>Math.max(1,...cols.map(c=>cards.filter(x=>x.row_id===r.id&&x.column_id===c.id).length)));
+   const totalCards=maxPerRow.reduce((a,b)=>a+b,0)||1;
+   const viewportHeight=Math.max(340,$('board-area').clientHeight||window.innerHeight);
+   const headerHeight=mobile?40:58;
+   const outerPadding=mobile?9:15;
+   const gap=mobile?5:10;
+   const natural=(viewportHeight-headerHeight-rows.length*outerPadding-totalCards*gap)/totalCards;
+   const cardHeight=Math.round(Math.max(mobile?51:62,Math.min(mobile?80:150,natural)));
+   const rowHeights=maxPerRow.map(n=>Math.max(mobile?78:96,n*(cardHeight+gap)+outerPadding));
+   root.style.gridTemplateRows=`${headerHeight}px `+rowHeights.map(h=>`${h}px`).join(' ');
+   root.style.setProperty('--p-card-height',`${cardHeight}px`);
+   root.style.setProperty('--p-card-gap',`${gap}px`);
+   root.style.setProperty('--p-cell-padding',`${mobile?4:Math.max(7,Math.floor(outerPadding/2))}px`);
+   root.style.setProperty('--p-title-font',`${mobile?12:Math.round(Math.max(16,Math.min(24,cardHeight*.24)))}px`);
+   root.style.setProperty('--p-meta-font',`${mobile?9:Math.round(Math.max(12,Math.min(17,cardHeight*.16)))}px`);
  }else root.style.gridTemplateRows='';
  root.replaceChildren();if(!rows.length||!columns.length){const empty=el('div','empty','Den här tavlan är tom. Öppna Tavlans inställningar och lägg till minst en rad och en kolumn för att börja.');root.append(empty);$('button-add-card').disabled=true;$('view-all').hidden=true;$('view-label').textContent='Tom tavla';return;}$('button-add-card').disabled=false;root.append(el('div','corner'));for(const c of cols){const h=el('div','col-head',c.label);h.title='Visa denna kolumn större';h.onclick=()=>{if(window.matchMedia('(max-width:650px)').matches&&!focusedColumn){focusedColumn=c.id;renderBoard();}};root.append(h);}for(const r of rows){root.append(el('div','row-head',r.label));for(const c of cols){const zone=el('section','cell');zone.dataset.row=r.id;zone.dataset.column=c.id;const arr=cards.filter(x=>x.row_id===r.id&&x.column_id===c.id).sort((a,b)=>a.sort_order-b.sort_order);for(let i=0;i<arr.length;i++)zone.append(cardElement(arr[i],arr,i));if(!presenting){const add=el('button','add','＋');add.title='Lägg till här';add.onclick=()=>editCard(null,r.id,c.id);zone.append(add);}zone.ondragover=e=>{if(drag){e.preventDefault();zone.classList.add('over');}};zone.ondragleave=()=>zone.classList.remove('over');zone.ondrop=e=>{if(drag){e.preventDefault();zone.classList.remove('over');moveCard(drag,r.id,c.id);drag=null;}};root.append(zone);}}$('view-all').hidden=!focusedColumn;$('view-label').textContent=focusedColumn?(columns.find(c=>c.id===focusedColumn)?.label||'Kolumn'):'Tryck på en kolumnrubrik för större vy';}
 $('view-all').onclick=()=>{focusedColumn=null;renderBoard();};
