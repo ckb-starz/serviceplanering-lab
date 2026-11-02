@@ -87,13 +87,55 @@ $('new-board').onclick=()=>editBoard(null);
 $('manage-members').onclick=()=>showMembers().catch(e=>feedback('members-feedback','Kunde inte läsa medlemmar: '+err(e),true));
 $('invite-member').onclick=async()=>{if(!workspace)return;const address=await ask('Lägg till en medlem','Personen måste redan ha registrerat ett konto i appen. Du kan bara bjuda in om du äger arbetsytan.','e-postadress');if(!address)return;try{const msg=await req(sb.rpc('pd_add_member',{wid:workspace.id,member_email:address,new_role:'editor'}));alert(msg||'Klart');if($('members-dialog').open)await showMembers();}catch(e){alert(err(e));}};
 async function showMembers(){if(!workspace)return;const d=$('members-dialog'),root=$('members-list');$('members-title').textContent=workspace.name;root.replaceChildren();feedback('members-feedback','Laddar…');if(!d.open)openDialogQuietly(d);const mine=workspace.created_by===user?.id;$('invite-member').hidden=!mine;const list=await req(sb.rpc('pd_list_members',{wid:workspace.id}));feedback('members-feedback',mine?'Ägaren kan ändra behörigheter och ta bort medlemmar.':'Endast arbetsytans ägare kan hantera medlemmar.');for(const m of list){const row=el('div','member-row');const left=el('div','member-info');left.append(el('strong','',m.email||'Okänd användare'),el('div','muted',m.role==='owner'?'Ägare':m.role==='editor'?'Redigerare':'Läsbehörighet'));row.append(left);if(mine&&m.role!=='owner'){const acts=el('div','member-actions');const sel=el('select');sel.setAttribute('aria-label','Behörighet för '+m.email);for(const [v,lab] of [['editor','Redigerare'],['viewer','Läsbehörighet']]){const opt=el('option','',lab);opt.value=v;sel.append(opt);}sel.value=m.role;sel.onchange=async()=>{sel.disabled=true;try{await req(sb.rpc('pd_set_member_role',{wid:workspace.id,member_id:m.user_id,new_role:sel.value}));await showMembers();}catch(e){feedback('members-feedback',err(e),true);sel.disabled=false;}};const remove=el('button','danger','Ta bort');remove.type='button';remove.onclick=async()=>{if(!confirm('Ta bort '+m.email+' från arbetsytan?'))return;remove.disabled=true;try{await req(sb.rpc('pd_remove_member',{wid:workspace.id,member_id:m.user_id}));await showMembers();}catch(e){feedback('members-feedback',err(e),true);remove.disabled=false;}};acts.append(sel,remove);row.append(acts);}root.append(row);}if(!list.length)root.append(el('p','muted','Inga medlemmar att visa.'));}
-async function openBoard(id){if(presenting)endPresentation();board=boards.find(b=>b.id===id)||await req(sb.from('pd_boards').select('*').eq('id',id).single());focusedColumn=null;await reloadBoard();showMain('board-area');$('current-name').textContent=board.name;renderSelector();renderBoard();subscribe();markRecent(id);}
+async function openBoard(id){if(presenting)endPresentation();board=boards.find(b=>b.id===id)||await req(sb.from('pd_boards').select('*').eq('id',id).single());focusedColumn=null;await reloadBoard();expanded.clear();expandAll=false;showMain('board-area');$('current-name').textContent=board.name;renderSelector();renderBoard();subscribe();markRecent(id);}
 async function reloadBoard(){if(!board)return;const bid=board.id;const [r,c,f,n]=await Promise.all([req(sb.from('pd_rows').select('*').eq('board_id',bid).order('sort_order')),req(sb.from('pd_columns').select('*').eq('board_id',bid).order('sort_order')),req(sb.from('pd_fields').select('*').eq('board_id',bid).order('sort_order')),req(sb.from('pd_cards').select('*').eq('board_id',bid).order('sort_order'))]);if(board?.id!==bid)return;rows=r;columns=c;fields=f;cards=n;renderBoard();info('Synkroniserat • '+n.length+' lappar');}
 function renderSelector(){const s=$('board-selector');s.replaceChildren();for(const b of boards){const o=el('option','',b.name);o.value=b.id;s.append(o);}s.value=board.id;}
 $('board-selector').onchange=e=>openBoard(e.target.value).catch(x=>alert(err(x)));
-function fieldColor(card){const f=fields.find(f=>f.color_source);if(!f)return ['#eef2f5','#9ba8b4'];const val=card.values_json?.[f.id];const opt=Array.isArray(f.options)?f.options.find(o=>o.label===val):null;return [opt?.color||'#eef2f5',opt?.color||'#9ba8b4'];}
+function accentFromPaper(color){
+ if(!/^#[0-9a-f]{6}$/i.test(color||''))return '#72889e';
+ const r=parseInt(color.slice(1,3),16)/255,g=parseInt(color.slice(3,5),16)/255,b=parseInt(color.slice(5,7),16)/255;
+ const max=Math.max(r,g,b),min=Math.min(r,g,b),delta=max-min;
+ let hue=0;
+ if(delta){switch(max){case r:hue=((g-b)/delta+6)%6;break;case g:hue=(b-r)/delta+2;break;default:hue=(r-g)/delta+4;}hue*=60;}
+ if(delta<.07)return '#8497a9';
+ return `hsl(${Math.round(hue)} 68% 45%)`;
+}
+function fieldColor(card){const f=fields.find(f=>f.color_source);if(!f)return ['#eef2f5','#8497a9'];const val=card.values_json?.[f.id];const opt=Array.isArray(f.options)?f.options.find(o=>o.label===val):null;const paper=opt?.color||'#eef2f5';return [paper,accentFromPaper(paper)];}
 const expanded=new Set();
-function cardElement(card,siblings,index){const n=el('article','note');n.dataset.cardId=card.id;n.tabIndex=0;n.setAttribute('role','button');n.setAttribute('aria-expanded',expanded.has(card.id)?'true':'false');const [paper,edge]=fieldColor(card);n.style.setProperty('--paper',paper);n.style.setProperty('--edge',edge);const top=el('div','note-labels');const primary=fields.filter(f=>f.is_primary).slice(0,2);for(const f of primary){const v=card.values_json?.[f.id];if(v)top.append(el('span','',v));}if(top.childNodes.length)n.append(top);n.append(el('div','note-name',card.title));const reveal=expanded.has(card.id)||Boolean(focusedColumn);if(reveal){const extra=el('div','note-extra');for(const f of fields){if(!focusedColumn&&f.is_primary)continue;const v=card.values_json?.[f.id];if(!v)continue;const pair=el('div','kv');pair.append(el('span','key',f.name),el('span','field-value',v));extra.append(pair);}const actions=el('div','note-tools');const edit=el('button','','✎ Redigera');edit.onclick=e=>{e.stopPropagation();editCard(card.id);};const up=el('button','','↑');up.title='Flytta upp';up.disabled=index===0;up.onclick=e=>{e.stopPropagation();reorderCard(card,-1);};const down=el('button','','↓');down.title='Flytta ned';down.disabled=index===siblings.length-1;down.onclick=e=>{e.stopPropagation();reorderCard(card,1);};if(!presenting){actions.append(edit,up,down);extra.append(actions);}n.append(extra);}n.onclick=e=>{if(suppressNextClick){e.preventDefault();return;}if(e.target.closest('button'))return;if(expanded.has(card.id))expanded.delete(card.id);else expanded.add(card.id);renderBoard();};n.onkeydown=e=>{if(e.key==='Enter'&&e.target===n){e.preventDefault();n.click();}};
+let expandAll=false, presentationMode='overview';
+function isCardExpanded(id){return expandAll || expanded.has(id);}
+function updateExpandControl(){
+ const btn=$('expand-toggle');
+ if(!btn)return;
+ btn.hidden=presenting&&presentationMode==='overview';
+ btn.textContent=expandAll?'⊟ Minimera alla':'⊞ Expandera alla';
+ btn.setAttribute('aria-pressed',String(expandAll));
+}
+function presentCardDetails(card){
+ const dialog=$('presentation-card-dialog'),content=$('presentation-card-details');
+ content.replaceChildren();
+ $('presentation-card-title').textContent=card.title;
+ const rc=el('p','present-context',`${rows.find(r=>r.id===card.row_id)?.label||''} · ${columns.find(c=>c.id===card.column_id)?.label||''}`);
+ content.append(rc);
+ for(const f of fields){const v=card.values_json?.[f.id];if(!v)continue;
+  const item=el('div','present-detail-item');item.append(el('strong','',f.name),el('div','present-detail-value',v));content.append(item);
+ }
+ if(!content.querySelector('.present-detail-item'))content.append(el('p','muted','Inga ytterligare detaljer.'));
+ if(!dialog.open)openDialogQuietly(dialog);
+}
+$('expand-toggle').onclick=()=>{expandAll=!expandAll;expanded.clear();renderBoard();};
+$('presentation-overview').onclick=()=>{presentationMode='overview';expandAll=false;expanded.clear();renderBoard();};
+$('presentation-detail').onclick=()=>{presentationMode='detail';expandAll=false;expanded.clear();renderBoard();};
+
+function cardElement(card,siblings,index){const n=el('article','note');n.dataset.cardId=card.id;n.tabIndex=0;n.setAttribute('role','button');n.setAttribute('aria-expanded',isCardExpanded(card.id)?'true':'false');const [paper,edge]=fieldColor(card);n.style.setProperty('--paper',paper);n.style.setProperty('--edge',edge);const top=el('div','note-labels');const primary=fields.filter(f=>f.is_primary).slice(0,2);for(const f of primary){const v=card.values_json?.[f.id];if(v)top.append(el('span','',v));}if(top.childNodes.length)n.append(top);n.append(el('div','note-name',card.title));const reveal=(presenting&&presentationMode==='overview')?false:isCardExpanded(card.id);if(reveal){const extra=el('div','note-extra');for(const f of fields){if(!focusedColumn&&f.is_primary)continue;const v=card.values_json?.[f.id];if(!v)continue;const pair=el('div','kv');pair.append(el('span','key',f.name),el('span','field-value',v));extra.append(pair);}const actions=el('div','note-tools');const edit=el('button','','✎ Redigera');edit.onclick=e=>{e.stopPropagation();editCard(card.id);};const up=el('button','','↑');up.title='Flytta upp';up.disabled=index===0;up.onclick=e=>{e.stopPropagation();reorderCard(card,-1);};const down=el('button','','↓');down.title='Flytta ned';down.disabled=index===siblings.length-1;down.onclick=e=>{e.stopPropagation();reorderCard(card,1);};if(!presenting){actions.append(edit,up,down);extra.append(actions);}n.append(extra);}n.onclick=e=>{
+ if(suppressNextClick){e.preventDefault();return;}
+ if(e.target.closest('button'))return;
+ if(presenting&&presentationMode==='overview'){presentCardDetails(card);return;}
+ if(expandAll){expandAll=false;expanded.clear();expanded.add(card.id);}
+ else if(expanded.has(card.id))expanded.delete(card.id);
+ else {expanded.clear();expanded.add(card.id);}
+ renderBoard();
+};n.onkeydown=e=>{if(e.key==='Enter'&&e.target===n){e.preventDefault();n.click();}};
 if(!presenting&&window.matchMedia('(min-width:651px)').matches){n.draggable=true;n.addEventListener('dragstart',e=>{drag=card.id;n.classList.add('dragging');e.dataTransfer.setData('text/plain',card.id);});n.addEventListener('dragend',()=>{drag=null;n.classList.remove('dragging');});n.addEventListener('dragover',e=>{if(drag&&drag!==card.id)e.preventDefault();});n.addEventListener('drop',e=>{e.preventDefault();e.stopPropagation();if(drag&&drag!==card.id)moveCard(drag,card.row_id,card.column_id,card.id);drag=null;});}
 if(!presenting&&window.matchMedia('(max-width:650px)').matches)installTouchDrag(n,card);
 return n;}
@@ -145,10 +187,25 @@ function installTouchDrag(node,card){
   node.addEventListener('touchend',end,{passive:true});
   node.addEventListener('touchcancel',end,{passive:true});
 }
-function renderBoard(){if(!board||!$('board-grid'))return;const cols=focusedColumn?columns.filter(c=>c.id===focusedColumn):columns;const root=$('board-grid'),outer=$('board');outer.classList.toggle('focus',Boolean(focusedColumn));root.style.setProperty('--cols',String(Math.max(1,cols.length)));root.replaceChildren();if(!rows.length||!columns.length){const empty=el('div','empty','Den här tavlan är tom. Öppna Tavlans inställningar och lägg till minst en rad och en kolumn för att börja.');root.append(empty);$('button-add-card').disabled=true;$('view-all').hidden=true;$('view-label').textContent='Tom tavla';return;}$('button-add-card').disabled=false;root.append(el('div','corner'));for(const c of cols){const h=el('div','col-head',c.label);h.title='Visa denna kolumn större';h.onclick=()=>{if(window.matchMedia('(max-width:650px)').matches&&!focusedColumn){focusedColumn=c.id;renderBoard();}};root.append(h);}for(const r of rows){root.append(el('div','row-head',r.label));for(const c of cols){const zone=el('section','cell');zone.dataset.row=r.id;zone.dataset.column=c.id;const arr=cards.filter(x=>x.row_id===r.id&&x.column_id===c.id).sort((a,b)=>a.sort_order-b.sort_order);for(let i=0;i<arr.length;i++)zone.append(cardElement(arr[i],arr,i));if(!presenting){const add=el('button','add','＋');add.title='Lägg till här';add.onclick=()=>editCard(null,r.id,c.id);zone.append(add);}zone.ondragover=e=>{if(drag){e.preventDefault();zone.classList.add('over');}};zone.ondragleave=()=>zone.classList.remove('over');zone.ondrop=e=>{if(drag){e.preventDefault();zone.classList.remove('over');moveCard(drag,r.id,c.id);drag=null;}};root.append(zone);}}$('view-all').hidden=!focusedColumn;$('view-label').textContent=focusedColumn?(columns.find(c=>c.id===focusedColumn)?.label||'Kolumn'):'Tryck på en kolumnrubrik för större vy';}
+function renderBoard(){if(!board||!$('board-grid'))return;
+ updateExpandControl();
+ $('presentation-overview').classList.toggle('active',presenting&&presentationMode==='overview');
+ $('presentation-detail').classList.toggle('active',presenting&&presentationMode==='detail');
+ document.body.classList.toggle('present-detail',presenting&&presentationMode==='detail');
+ document.body.classList.toggle('present-overview',presenting&&presentationMode==='overview');const cols=focusedColumn?columns.filter(c=>c.id===focusedColumn):columns;const root=$('board-grid'),outer=$('board');outer.classList.toggle('focus',Boolean(focusedColumn));root.style.setProperty('--cols',String(Math.max(1,cols.length)));
+ if(presenting&&presentationMode==='overview'){
+   // Väg radens höjd efter hur många lappar den tätaste rutan innehåller.
+   const cellWidth=Math.max(170,(window.innerWidth-155)/Math.max(cols.length,1));
+   const cardsPerLine=Math.max(1,Math.floor(cellWidth/280));
+   const weights=rows.map(r=>Math.max(1,...cols.map(c=>Math.ceil(cards.filter(x=>x.row_id===r.id&&x.column_id===c.id).length/cardsPerLine))));
+   root.style.gridTemplateRows='52px '+weights.map(n=>`minmax(${Math.max(92,n*44+24)}px,${Math.max(1,n)}fr)`).join(' ');
+   const dense=Math.max(...weights,1);
+   root.style.setProperty('--presentation-note-font',`${dense>9?12:dense>5?14:16}px`);
+ }else root.style.gridTemplateRows='';
+ root.replaceChildren();if(!rows.length||!columns.length){const empty=el('div','empty','Den här tavlan är tom. Öppna Tavlans inställningar och lägg till minst en rad och en kolumn för att börja.');root.append(empty);$('button-add-card').disabled=true;$('view-all').hidden=true;$('view-label').textContent='Tom tavla';return;}$('button-add-card').disabled=false;root.append(el('div','corner'));for(const c of cols){const h=el('div','col-head',c.label);h.title='Visa denna kolumn större';h.onclick=()=>{if(window.matchMedia('(max-width:650px)').matches&&!focusedColumn){focusedColumn=c.id;renderBoard();}};root.append(h);}for(const r of rows){root.append(el('div','row-head',r.label));for(const c of cols){const zone=el('section','cell');zone.dataset.row=r.id;zone.dataset.column=c.id;const arr=cards.filter(x=>x.row_id===r.id&&x.column_id===c.id).sort((a,b)=>a.sort_order-b.sort_order);for(let i=0;i<arr.length;i++)zone.append(cardElement(arr[i],arr,i));if(!presenting){const add=el('button','add','＋');add.title='Lägg till här';add.onclick=()=>editCard(null,r.id,c.id);zone.append(add);}zone.ondragover=e=>{if(drag){e.preventDefault();zone.classList.add('over');}};zone.ondragleave=()=>zone.classList.remove('over');zone.ondrop=e=>{if(drag){e.preventDefault();zone.classList.remove('over');moveCard(drag,r.id,c.id);drag=null;}};root.append(zone);}}$('view-all').hidden=!focusedColumn;$('view-label').textContent=focusedColumn?(columns.find(c=>c.id===focusedColumn)?.label||'Kolumn'):'Tryck på en kolumnrubrik för större vy';}
 $('view-all').onclick=()=>{focusedColumn=null;renderBoard();};
-function endPresentation(){if(!presenting)return;presenting=false;document.body.classList.remove('presenting');$('end-presentation').hidden=true;$('start-presentation').hidden=false;if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});renderBoard();}
-$('start-presentation').onclick=async()=>{if(!board)return;presenting=true;focusedColumn=null;document.body.classList.add('presenting');$('start-presentation').hidden=true;$('end-presentation').hidden=false;renderBoard();const area=$('board-area');if(area.requestFullscreen){try{await area.requestFullscreen();}catch{/* iPhone Safari: visningsläge utan native fullscreen */}}};
+function endPresentation(){if(!presenting)return;presenting=false;presentationMode='overview';expandAll=false;expanded.clear();$('presentation-card-dialog').close();document.body.classList.remove('presenting');$('end-presentation').hidden=true;$('start-presentation').hidden=false;if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});renderBoard();}
+$('start-presentation').onclick=async()=>{if(!board)return;presenting=true;presentationMode='overview';expandAll=false;expanded.clear();focusedColumn=null;document.body.classList.add('presenting');$('start-presentation').hidden=true;$('end-presentation').hidden=false;renderBoard();const area=$('board-area');if(area.requestFullscreen){try{await area.requestFullscreen();}catch{/* iPhone Safari: visningsläge utan native fullscreen */}}};
 $('end-presentation').onclick=endPresentation;
 document.addEventListener('fullscreenchange',()=>{if(presenting&&!document.fullscreenElement)endPresentation();});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&presenting)endPresentation();});
@@ -168,16 +225,52 @@ function subscribe(){if(channel)sb.removeChannel(channel);channel=sb.channel('pd
 let draft=null;
 function labelEditor(container,items,limit){const root=$(container);root.replaceChildren();items.forEach((item,i)=>{const div=el('div','item-head');const inp=el('input');inp.value=item.label;inp.placeholder='Ange namn';inp.setAttribute('aria-label','Namn');inp.oninput=()=>{item.label=inp.value;};const rem=el('button','','×');rem.type='button';rem.disabled=false;rem.onclick=()=>{if(!confirm('Ta bort raden/kolumnen? Innehåll måste först flyttas bort.'))return;items.splice(i,1);renderDraft();};div.append(inp,rem);root.append(div);});}
 function renderDraft(){labelEditor('rows-editor',draft.rows,20);labelEditor('columns-editor',draft.cols,12);const root=$('fields-editor');root.replaceChildren();draft.fields.forEach((f,i)=>{const item=el('div','item');const line=el('div','item-head');const inp=el('input');inp.value=f.name;inp.placeholder='Ange fältnamn';inp.setAttribute('aria-label','Fältnamn');inp.oninput=()=>f.name=inp.value;const del=el('button','','×');del.type='button';del.onclick=()=>{if(!confirm('Ta bort fältet och dess information från tavlan?'))return;draft.fields.splice(i,1);renderDraft();};line.append(inp,del);item.append(line);const type=el('select');for(const [v,name] of [['text','Text'],['textarea','Lång text'],['select','Rullista']]){const op=el('option','',name);op.value=v;type.append(op);}type.value=f.kind;type.onchange=()=>{f.kind=type.value;renderDraft();};const typeLine=el('label','control');typeLine.append(el('span','','Typ'),type);item.append(typeLine);const p=el('label','mini');const check=el('input');check.type='checkbox';check.checked=!!f.is_primary;check.onchange=()=>{if(check.checked&&draft.fields.filter(x=>x.is_primary).length>=2){check.checked=false;alert('Max två extra primära fält. Rubriken är alltid synlig.');return;}f.is_primary=check.checked;};p.append(check,document.createTextNode(' Primärt fält (synligt på lappen)'));item.append(p);const color=el('label','mini');const c=el('input');c.type='radio';c.name='colorfield';c.checked=!!f.color_source;c.onchange=()=>{draft.fields.forEach(x=>x.color_source=x===f);};color.append(c,document.createTextNode(' Styr lappens färg'));item.append(color);
-if(f.kind==='select'){const list=el('div','settings-list');for(let j=0;j<(f.options||[]).length;j++){const opt=f.options[j];const row=el('div','item-head');const name=el('input');name.value=opt.label;name.placeholder='Alternativ';name.oninput=()=>opt.label=name.value;const swatch=el('input');swatch.type='color';swatch.className='swatch';swatch.value=/^#[0-9a-f]{6}$/i.test(opt.color)?opt.color:'#d8eefa';swatch.title='Alternativets färg';swatch.oninput=()=>opt.color=swatch.value;const remove=el('button','','×');remove.type='button';remove.onclick=()=>{f.options.splice(j,1);renderDraft();};row.append(name,swatch,remove);list.append(row);}const add=el('button','','＋ Alternativ');add.type='button';add.onclick=()=>{f.options.push({label:'Nytt alternativ',color:'#dde6ef'});renderDraft();};item.append(list,add);}root.append(item);});}
+if(f.kind==='select'){const list=el('div','settings-list');for(let j=0;j<(f.options||[]).length;j++){const opt=f.options[j];const row=el('div','item-head');const name=el('input');name.value=opt.label;name.placeholder='Alternativ';name.oninput=()=>opt.label=name.value;const swatch=el('input');swatch.type='color';swatch.className='swatch';swatch.value=/^#[0-9a-f]{6}$/i.test(opt.color)?opt.color:'#d8eefa';swatch.title='Alternativets färg';swatch.oninput=()=>opt.color=swatch.value;const remove=el('button','','×');remove.type='button';remove.onclick=()=>{f.options.splice(j,1);renderDraft();};row.append(name,swatch,remove);list.append(row);}const add=el('button','','＋ Alternativ');add.type='button';add.onclick=()=>{f.options.push({label:'Nytt alternativ',color:'#dde6ef',_originalLabel:null});renderDraft();};item.append(list,add);}root.append(item);});}
 $('add-row').onclick=()=>{if(draft.rows.length>=20)return;draft.rows.push({label:''});renderDraft();$('rows-editor').lastElementChild?.querySelector('input')?.focus();};
 $('add-column').onclick=()=>{if(draft.cols.length>=12)return;draft.cols.push({label:''});renderDraft();$('columns-editor').lastElementChild?.querySelector('input')?.focus();};
 $('add-field').onclick=()=>{if(draft.fields.length>=20)return;draft.fields.push({name:'',kind:'text',is_primary:false,color_source:false,options:[]});renderDraft();$('fields-editor').lastElementChild?.querySelector('input')?.focus();};
 $('board-dialog').addEventListener('cancel',e=>{if(!confirmDiscard('board-dialog'))e.preventDefault();});
 $('board-cancel').onclick=()=>{if(confirmDiscard('board-dialog'))$('board-dialog').close();};
 $('button-settings').onclick=()=>editBoard(board);
-function editBoard(b){editingBoard=Boolean(b);draft={rows:b?rows.map(x=>({...x})):[],cols:b?columns.map(x=>({...x})):[],fields:b?fields.map(x=>({...x,options:JSON.parse(JSON.stringify(x.options||[]))})):[]};$('board-name').value=b?.name||'';$('board-dialog-title').textContent=b?'Anpassa tavla':'Skapa tavla';renderDraft();openDialogQuietly($('board-dialog'));rememberForm('board-dialog');}
+function editBoard(b){editingBoard=Boolean(b);draft={rows:b?rows.map(x=>({...x})):[],cols:b?columns.map(x=>({...x})):[],fields:b?fields.map(x=>({...x,options:(x.options||[]).map(o=>({...o,_originalLabel:o.label}))})):[]};$('board-name').value=b?.name||'';$('board-dialog-title').textContent=b?'Anpassa tavla':'Skapa tavla';renderDraft();openDialogQuietly($('board-dialog'));rememberForm('board-dialog');}
 $('board-form').onsubmit=async e=>{e.preventDefault();if(!e.submitter||e.submitter.tagName!=='BUTTON')return;if(busy)return;const name=$('board-name').value.trim();if(!name)return;for(const a of [draft.rows,draft.cols,draft.fields]){if(a.some(x=>!String(x.label??x.name).trim())){alert('Alla rader, kolumner och fält behöver ett namn.');return;}}if(draft.fields.filter(f=>f.is_primary).length>2){alert('Max två primära fält.');return;}if(draft.fields.filter(f=>f.color_source).length>1){alert('Högst ett färgstyrande fält.');return;}
-$('board-dialog').close();busy=true;try{let bid;if(editingBoard){bid=board.id;await req(sb.from('pd_boards').update({name}).eq('id',bid));}else{const b=await req(sb.from('pd_boards').insert({workspace_id:workspace.id,name}).select().single());bid=b.id;}
+// Fältalternativ sparas som text i varje lapp. Spåra namnändringar innan vi ändrar fältdefinitioner.
+ const renames=[];const deleted=[];
+ if(editingBoard){
+  for(const current of fields.filter(f=>f.kind==='select')){
+   const next=draft.fields.find(f=>f.id===current.id);
+   if(!next)continue;
+   if(next.kind!=='select'){
+    // Vid byte av typ behåll gamla värden som fritext; de försvinner inte ur databasen.
+    continue;
+   }
+   const remaining=new Set((next.options||[]).map(o=>o._originalLabel).filter(Boolean));
+   for(const old of current.options||[]){
+    if(!remaining.has(old.label))deleted.push({fieldId:current.id,label:old.label});
+   }
+   for(const option of next.options||[]){
+    const from=option._originalLabel,to=option.label.trim();
+    if(from&&from!==to)renames.push({fieldId:current.id,from,to});
+   }
+  }
+ }
+ $('board-dialog').close();busy=true;try{
+  if(editingBoard){
+   // Kontrollera även senaste sparade data, inte bara klientens cache.
+   const latest=await req(sb.from('pd_cards').select('id,values_json,updated_at').eq('board_id',board.id));
+   const removedField=fields.find(f=>!draft.fields.some(x=>x.id===f.id)&&latest.some(c=>c.values_json?.[f.id]));
+   if(removedField)throw Error('Fältet "'+removedField.name+'" har sparade värden på lappar. Töm värdena innan du tar bort fältet.');
+   const deletionInUse=deleted.find(d=>latest.some(c=>c.values_json?.[d.fieldId]===d.label));
+   if(deletionInUse)throw Error('Alternativet "'+deletionInUse.label+'" används på befintliga lappar. Byt namn i stället eller flytta lapparna till ett annat alternativ innan du tar bort det.');
+   for(const card of latest){
+    const values={...(card.values_json||{})};let changed=false;
+    for(const change of renames){if(values[change.fieldId]===change.from){values[change.fieldId]=change.to;changed=true;}}
+    if(!changed)continue;
+    const result=await req(sb.from('pd_cards').update({values_json:values}).eq('id',card.id).eq('updated_at',card.updated_at).select('id'));
+    if(!result.length)throw Error('En lapp ändrades samtidigt av någon annan. Uppdatera tavlan och försök igen.');
+   }
+  }
+ let bid;if(editingBoard){bid=board.id;await req(sb.from('pd_boards').update({name}).eq('id',bid));}else{const b=await req(sb.from('pd_boards').insert({workspace_id:workspace.id,name}).select().single());bid=b.id;}
 // Behåll UUID för befintliga rader, kolumner och fält. Ändringar syns hos samtliga användare.
 for(const [table,items,orig] of [['pd_rows',draft.rows,rows],['pd_columns',draft.cols,columns],['pd_fields',draft.fields,fields]]){
 for(let i=0;i<items.length;i++){const x=items[i];const record={board_id:bid,sort_order:(i+1)*1000};if(table==='pd_fields'){Object.assign(record,{name:x.name.trim(),kind:x.kind,is_primary:!!x.is_primary,color_source:!!x.color_source,options:x.kind==='select'?(x.options||[]).filter(o=>o.label.trim()).map(o=>({label:o.label.trim(),color:o.color})):[]});}else record.label=x.label.trim();if(x.id){await req(sb.from(table).update(record).eq('id',x.id));}else{await req(sb.from(table).insert(record));}}
