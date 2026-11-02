@@ -1,7 +1,17 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 const $=id=>document.getElementById(id), el=(tag,cl,txt)=>{const n=document.createElement(tag);if(cl)n.className=cl;if(txt!==undefined)n.textContent=String(txt);return n;};
 const CONN='serviceplanering-lab-connection-v1';
-let presenting=false,recoveryMode=false,authSubscription=null;
+// Läs återställningsindikatorn INNAN Supabase hinner förbruka och rensa URL-fragmentet.
+// Supabase kan skicka INITIAL_SESSION före PASSWORD_RECOVERY i vissa webbläsarflöden.
+const recoveryLinkAtLoad=(()=>{
+ try{
+  const hash=new URLSearchParams(window.location.hash.replace(/^#/,''));
+  const query=new URLSearchParams(window.location.search);
+  return hash.get('type')==='recovery'||query.get('type')==='recovery'||query.get('auth_action')==='recovery';
+ }catch{return false;}
+})();
+let presenting=false,recoveryMode=recoveryLinkAtLoad,authSubscription=null;
+let recoveryDetectedByEvent=false;
 let sb=null, user=null, workspaces=[], workspace=null, boards=[],board=null, rows=[],columns=[],fields=[],cards=[],editingId=null,editingBoard=false,channel=null,drag=null,busy=false,focusedColumn=null;
 const templateFields=()=>[{name:'Kategori',kind:'select',is_primary:true,color_source:true,options:[{label:'Alternativ A',color:'#d8eefa'},{label:'Alternativ B',color:'#d9f3dd'}]},{name:'Ansvarig',kind:'select',is_primary:true,color_source:false,options:[{label:'Jag',color:'#eeeeee'}]},{name:'Kommentar',kind:'textarea',is_primary:false,color_source:false,options:[]}];
 function info(t){$('status').textContent=t;}
@@ -188,11 +198,44 @@ async function deleteBoard(id){
 }
 $('button-logout').onclick=async()=>{if(channel){await sb.removeChannel(channel);channel=null;}await sb.auth.signOut();user=null;recoveryMode=false;showOnly('auth');$('button-logout').hidden=true;info('Utloggad');};
 $('button-reconfig').onclick=()=>showOnly('config');
-async function establish(){const {data,error}=await sb.auth.getSession();if(error)throw error;user=data.session?.user||null;if(recoveryMode){showOnly('auth');openRecoveryDialog();return;}if(!user){$('button-logout').hidden=true;showOnly('auth');return;}$('button-logout').hidden=false;await home();}
-async function connect(url,key){if(!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(url))throw Error('Kontrollera Project URL');if(!key.startsWith('sb_publishable_')&&!key.startsWith('eyJ'))throw Error('Använd endast publishable/anon-nyckel');sb=createClient(url.replace(/\/$/,''),key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});if(authSubscription)authSubscription.unsubscribe();authSubscription=sb.auth.onAuthStateChange((event)=>{if(event==='PASSWORD_RECOVERY'){recoveryMode=true;setTimeout(()=>{showOnly('auth');openRecoveryDialog();},0);}}).data.subscription;localStorage.setItem(CONN,JSON.stringify({url,key}));await establish();}
+async function establish(){
+ const {data,error}=await sb.auth.getSession();if(error)throw error;
+ user=data.session?.user||null;
+ // Visa aldrig lösenordsformuläret förrän återställningslänken har gett en giltig session.
+ if(recoveryMode){
+  $('button-logout').hidden=true;
+  showOnly('auth');
+  if(user){openRecoveryDialog();}
+  else feedback('auth-feedback','Återställningslänken kunde inte verifieras eller har gått ut. Begär en ny länk via Glömt lösenord.',true);
+  return;
+ }
+ if(!user){$('button-logout').hidden=true;showOnly('auth');return;}$('button-logout').hidden=false;await home();}
+async function connect(url,key){if(!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(url))throw Error('Kontrollera Project URL');if(!key.startsWith('sb_publishable_')&&!key.startsWith('eyJ'))throw Error('Använd endast publishable/anon-nyckel');sb=createClient(url.replace(/\/$/,''),key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});if(authSubscription)authSubscription.unsubscribe();authSubscription=sb.auth.onAuthStateChange((event,session)=>{
+ if(event==='PASSWORD_RECOVERY'){
+  recoveryDetectedByEvent=true;
+  recoveryMode=true;
+  // Callbacken måste hållas synkron; Supabase tillåter inte await av auth-anrop här.
+  setTimeout(()=>{
+   user=session?.user||user;
+   showOnly('auth');
+   if(user)openRecoveryDialog();
+   else establish().catch(x=>feedback('auth-feedback',err(x),true));
+  },0);
+ }
+}).data.subscription;localStorage.setItem(CONN,JSON.stringify({url,key}));await establish();}
 $('config-form').onsubmit=async e=>{e.preventDefault();try{await connect($('url').value.trim(),$('key').value.trim());}catch(e){alert(err(e));}};
 $('auth-form').onsubmit=async e=>{e.preventDefault();try{const {error}=await sb.auth.signInWithPassword({email:$('email').value.trim(),password:$('password').value});if(error)throw error;$('password').value='';await establish();}catch(e){feedback('auth-feedback',e?.message==='Invalid login credentials'?'Inloggningen misslyckades. Kontrollera e-postadress och lösenord, eller välj Glömt lösenord.':'Inloggningen misslyckades: '+err(e),true);}};
-function openRecoveryDialog(){const d=$('recovery-dialog');if(d.open)return;feedback('recovery-feedback','');openDialogQuietly(d);}
+function openRecoveryDialog(){
+ const d=$('recovery-dialog');if(d.open)return;
+ feedback('recovery-feedback','');
+ openDialogQuietly(d);
+}
+$('recovery-cancel').onclick=()=>{
+ $('recovery-dialog').close();recoveryMode=false;
+ history.replaceState(null,'',window.location.pathname);
+ showOnly('auth');
+ feedback('auth-feedback','Lösenordet har inte ändrats. Du kan begära en ny återställningslänk.');
+};
 for(const b of document.querySelectorAll('[data-toggle]')){b.addEventListener('click',()=>{const t=$(b.dataset.toggle),show=t.type==='password';t.type=show?'text':'password';b.textContent=show?'Dölj':'Visa';b.setAttribute('aria-label',show?'Dölj lösenord':'Visa lösenord');});}
 for(const b of document.querySelectorAll('[data-close]'))b.onclick=()=>$(b.dataset.close).close();
 $('button-register').onclick=()=>{$('register-form').reset();$('register-email').value=$('email').value.trim();feedback('register-feedback','');openDialogQuietly($('register-dialog'));};
