@@ -258,28 +258,10 @@ function renderBoard(){if(!board||!$('board-grid'))return;
  $('presentation-detail').classList.toggle('active',presenting&&presentationMode==='detail');
  document.body.classList.toggle('present-detail',presenting&&presentationMode==='detail');
  document.body.classList.toggle('present-overview',presenting&&presentationMode==='overview');const cols=focusedColumn?columns.filter(c=>c.id===focusedColumn):columns;const root=$('board-grid'),outer=$('board');outer.classList.toggle('focus',Boolean(focusedColumn));root.style.setProperty('--cols',String(Math.max(1,cols.length)));
- if(presenting&&presentationMode==='overview'){
-   // Håll alla lappar under varandra, inte i ett rutnät bredvid varandra.
-   // Beräkna en läsbar kortstorlek utifrån hur många kort som faktiskt ska visas.
-   const mobile=window.matchMedia('(max-width:650px)').matches;
-   const maxPerRow=rows.map(r=>Math.max(1,...cols.map(c=>cards.filter(x=>x.row_id===r.id&&x.column_id===c.id).length)));
-   const totalCards=maxPerRow.reduce((a,b)=>a+b,0)||1;
-   const viewportHeight=Math.max(340,$('board-area').clientHeight||window.innerHeight);
-   const headerHeight=mobile?40:58;
-   const sectionHeight=mobile?28:40;
-   const outerPadding=mobile?9:15;
-   const gap=mobile?5:10;
-   const natural=(viewportHeight-headerHeight-rows.length*(outerPadding+sectionHeight)-totalCards*gap)/totalCards;
-   const cardHeight=Math.round(Math.max(mobile?51:62,Math.min(mobile?80:150,natural)));
-   const rowHeights=maxPerRow.map(n=>Math.max(mobile?78:96,n*(cardHeight+gap)+outerPadding));
-   root.style.gridTemplateRows=`${headerHeight}px `+rowHeights.map(h=>`${sectionHeight}px ${h}px`).join(' ');
-   root.style.setProperty('--p-card-height',`${cardHeight}px`);
-   root.style.setProperty('--p-card-gap',`${gap}px`);
-   root.style.setProperty('--p-cell-padding',`${mobile?4:Math.max(7,Math.floor(outerPadding/2))}px`);
-   root.style.setProperty('--p-title-font',`${mobile?12:Math.round(Math.max(16,Math.min(24,cardHeight*.24)))}px`);
-   root.style.setProperty('--p-meta-font',`${mobile?9:Math.round(Math.max(12,Math.min(17,cardHeight*.16)))}px`);
- }else root.style.gridTemplateRows='';
- root.replaceChildren();if(!rows.length||!columns.length){const empty=el('div','empty','Den här tavlan är tom. Öppna Tavlans inställningar och lägg till minst en rad och en kolumn för att börja.');root.append(empty);$('button-add-card').disabled=true;$('view-all').hidden=true;$('view-label').textContent='Tom tavla';return;}$('button-add-card').disabled=false;root.append(el('div','corner'));for(const c of cols){const h=el('div','col-head',c.label);h.title='Visa denna kolumn större';h.onclick=()=>{if(window.matchMedia('(max-width:650px)').matches&&!focusedColumn){focusedColumn=c.id;renderBoard();}};root.append(h);}for(const r of rows){if(presenting){const divider=el('div','row-section-divider',r.label);root.append(divider);}const rowIndex=rows.indexOf(r);const band=rowIndex%2?'section-alt':'section-main';const rh=el('div','row-head '+band,r.label);root.append(rh);for(const c of cols){const zone=el('section','cell '+band);zone.dataset.row=r.id;zone.dataset.column=c.id;const arr=cards.filter(x=>x.row_id===r.id&&x.column_id===c.id).sort((a,b)=>a.sort_order-b.sort_order);for(let i=0;i<arr.length;i++)zone.append(cardElement(arr[i],arr,i));if(!presenting){const add=el('button','add','＋');add.title='Lägg till här';add.onclick=()=>editCard(null,r.id,c.id);zone.append(add);}root.append(zone);}}$('view-all').hidden=!focusedColumn;$('view-label').textContent=focusedColumn?(columns.find(c=>c.id===focusedColumn)?.label||'Kolumn'):'Tryck på en kolumnrubrik för större vy';}
+ // Presentationslägets rader ska följa innehållets naturliga höjd.
+ // Ingen beräknad kort- eller radhöjd: luft mellan korten utan utdragna tomrum.
+ root.style.gridTemplateRows='';
+ root.replaceChildren();if(!rows.length||!columns.length){const empty=el('div','empty','Den här tavlan är tom. Öppna Tavlans inställningar och lägg till minst en rad och en kolumn för att börja.');root.append(empty);$('button-add-card').disabled=true;$('view-all').hidden=true;$('view-label').textContent='Tom tavla';return;}$('button-add-card').disabled=false;if(!presenting)root.append(el('div','corner'));for(const c of cols){const h=el('div','col-head',c.label);h.title='Visa denna kolumn större';h.onclick=()=>{if(window.matchMedia('(max-width:650px)').matches&&!focusedColumn){focusedColumn=c.id;renderBoard();}};root.append(h);}for(const r of rows){if(presenting){const divider=el('div','row-section-divider',r.label);root.append(divider);}const rowIndex=rows.indexOf(r);const band=rowIndex%2?'section-alt':'section-main';if(!presenting){const rh=el('div','row-head '+band,r.label);root.append(rh);}for(const c of cols){const zone=el('section','cell '+band);zone.dataset.row=r.id;zone.dataset.column=c.id;const arr=cards.filter(x=>x.row_id===r.id&&x.column_id===c.id).sort((a,b)=>a.sort_order-b.sort_order);for(let i=0;i<arr.length;i++)zone.append(cardElement(arr[i],arr,i));if(!presenting){const add=el('button','add','＋');add.title='Lägg till här';add.onclick=()=>editCard(null,r.id,c.id);zone.append(add);}root.append(zone);}}$('view-all').hidden=!focusedColumn;$('view-label').textContent=focusedColumn?(columns.find(c=>c.id===focusedColumn)?.label||'Kolumn'):'Tryck på en kolumnrubrik för större vy';}
 $('view-all').onclick=()=>{focusedColumn=null;renderBoard();};
 function endPresentation(){if(!presenting)return;presenting=false;presentationMode='overview';expandAll=false;expanded.clear();$('presentation-card-dialog').close();document.body.classList.remove('presenting');$('end-presentation').hidden=true;$('start-presentation').hidden=false;if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});renderBoard();}
 $('start-presentation').onclick=async()=>{if(!board)return;presenting=true;presentationMode='overview';expandAll=false;expanded.clear();focusedColumn=null;document.body.classList.add('presenting');$('start-presentation').hidden=true;$('end-presentation').hidden=false;renderBoard();const area=$('board-area');if(area.requestFullscreen){try{await area.requestFullscreen();}catch{/* iPhone Safari: visningsläge utan native fullscreen */}}};
