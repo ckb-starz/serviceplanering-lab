@@ -268,28 +268,48 @@ function renderBoard(){if(!board||!$('board-grid'))return;
 $('view-all').onclick=()=>{focusedColumn=null;renderBoard();};
 function endPresentation(){if(!presenting)return;presenting=false;presentationMode='overview';expandAll=false;expanded.clear();$('presentation-card-dialog').close();document.body.classList.remove('presenting');$('end-presentation').hidden=true;$('start-presentation').hidden=false;if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});renderBoard();}
 
-/* ---------------- PDF export 2.5.0 ----------------
+/* ---------------- PDF export 2.5.1 ----------------
  * Endast redan inlästa tavledata används. Ingen data skickas till exporttjänst.
  * PDFMake laddas från jsDelivr, men själva dokumentet byggs lokalt i webbläsaren.
  * 1 cell per kolumn och tabellrad för att kunna bryta sida utan att skära i lappar.
  */
 const PDFMAKE_VERSION='0.2.20';
 let pdfLibPromise=null;
+// pdfmake 0.2.x stores embedded fonts through addVirtualFileSystem().
+// It does NOT reliably expose them through window.pdfMake.vfs.
+// Do not reject a functioning PDF engine simply because .vfs is absent.
 function loadPDFLibrary(){
- if(window.pdfMake?.createPdf && window.pdfMake?.vfs)return Promise.resolve(window.pdfMake);
  if(pdfLibPromise)return pdfLibPromise;
+ const hasEngine=()=>typeof window.pdfMake?.createPdf==='function';
  function loadScript(src){return new Promise((resolve,reject)=>{
-  const script=document.createElement('script');script.src=src;script.async=true;
-  script.onload=resolve;script.onerror=()=>reject(Error('Kunde inte ladda PDF-biblioteket. Kontrollera internetanslutningen.'));
+  const script=document.createElement('script');
+  let settled=false;
+  const finish=(error)=>{if(settled)return;settled=true;clearTimeout(timer);script.onload=null;script.onerror=null;if(error){script.remove();reject(error);}else resolve();};
+  const timer=setTimeout(()=>finish(Error('Tidsgräns för laddning av PDF-biblioteket.')),15000);
+  script.src=src;script.async=true;
+  script.onload=()=>finish();
+  script.onerror=()=>finish(Error('Kunde inte ladda '+src.split('/').pop()+'.'));
   document.head.append(script);
  });}
+ async function loadWithFallback(filename){
+  const sources=[
+   'https://cdn.jsdelivr.net/npm/pdfmake@'+PDFMAKE_VERSION+'/build/'+filename,
+   'https://unpkg.com/pdfmake@'+PDFMAKE_VERSION+'/build/'+filename
+  ];
+  let lastError;
+  for(const url of sources){
+   try{await loadScript(url);return;}catch(error){lastError=error;}
+  }
+  throw Error('PDF-biblioteket kunde inte laddas. Kontrollera nätverket eller om CDN blockeras. '+(lastError?.message||''));
+ }
  pdfLibPromise=(async()=>{
-  const base='https://cdn.jsdelivr.net/npm/pdfmake@'+PDFMAKE_VERSION+'/build/';
-  await loadScript(base+'pdfmake.min.js');
-  await loadScript(base+'vfs_fonts.js');
-  if(!window.pdfMake?.createPdf||!window.pdfMake?.vfs)throw Error('PDF-biblioteket kunde inte startas.');
+  if(!hasEngine())await loadWithFallback('pdfmake.min.js');
+  if(!hasEngine())throw Error('PDF-motorn kunde inte starta.');
+  // vfs_fonts.js registers Roboto via pdfMake.addVirtualFileSystem() in 0.2.x.
+  // It is safe to load even when .vfs is undefined.
+  await loadWithFallback('vfs_fonts.js');
   return window.pdfMake;
- })().catch(e=>{pdfLibPromise=null;throw e;});
+ })().catch(error=>{pdfLibPromise=null;throw error;});
  return pdfLibPromise;
 }
 function pdfText(value){return String(value??'').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g,'').trim();}
@@ -354,7 +374,7 @@ function pdfBoardDefinition(options){
   styles:{docTitle:{fontSize:Math.max(18,fs+10),bold:true,color:'#173555'},rowTitle:{fontSize:Math.max(12,fs+3),bold:true,color:'#213e5d'}},
   footer:(current,total)=>({text:`PlanBroW  •  ${current} / ${total}`,fontSize:8,color:'#7b8a9a',alignment:'right',margin:[0,0,30,0]}),
   content,
-  info:{title:pdfText(board.name)||'PlanBroW',subject:'Exporterad planering från PlanBroW',creator:'PlanBroW 2.5.0'}
+  info:{title:pdfText(board.name)||'PlanBroW',subject:'Exporterad planering från PlanBroW',creator:'PlanBroW 2.5.1'}
  };
 }
 $('export-pdf').onclick=()=>{
