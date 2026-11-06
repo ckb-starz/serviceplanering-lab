@@ -67,7 +67,7 @@ function esc(t){return String(t||'');}
 function pos(arr){return arr.length?Math.max(...arr.map(x=>x.sort_order||0))+1000:1000;}
 async function req(q){const {data,error}=await q;if(error)throw error;return data;}
 function call(t){if(t instanceof Error)throw t;}
-function showMain(section){showOnly('main');updateBottomNav(section);for(const id of ['home','boards','board-area'])$(id).hidden=id!==section;$('button-settings').hidden=section!=='board-area';$('button-add-card').hidden=section!=='board-area';$('button-refresh').hidden=section!=='board-area';$('export-pdf').hidden=section!=='board-area';$('board-selector').hidden=section!=='board-area';$('crumb').textContent=section==='board-area'?(workspace?.name||'')+' / '+(board?.name||''):workspace?.name||'';}
+function showMain(section){showOnly('main');updateBottomNav(section);for(const id of ['home','boards','board-area'])$(id).hidden=id!==section;$('button-settings').hidden=section!=='board-area';$('button-add-card').hidden=section!=='board-area';$('button-refresh').hidden=section!=='board-area';$('export-pdf').hidden=section!=='board-area';$('export-png').hidden=section!=='board-area';$('board-selector').hidden=section!=='board-area';$('crumb').textContent=section==='board-area'?(workspace?.name||'')+' / '+(board?.name||''):workspace?.name||'';}
 function updateBottomNav(section){
  for(const id of ['nav-home','nav-boards','nav-search','nav-settings'])$(id).classList.remove('active');
  $(section==='home'?'nav-home':'nav-boards').classList.add('active');
@@ -414,6 +414,107 @@ $('pdf-export-form').onsubmit=async e=>{
  finally{submit.disabled=false;}
 };
 /* ---------------- End PDF export ---------------- */
+/* ---------------- PNG export 2.5.2 ----------------
+ * Exporterar riktiga DOM-kort från presentationsläget (ingen omritad tabell).
+ * html2canvas laddas endast när det behövs; tavledata skickas inte till någon tjänst.
+ */
+let pngLibraryPromise=null;
+function loadPNGEngine(){
+ if(window.html2canvas)return Promise.resolve(window.html2canvas);
+ if(pngLibraryPromise)return pngLibraryPromise;
+ const sources=[
+  'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js',
+  'https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js'
+ ];
+ pngLibraryPromise=(async()=>{
+  let last;
+  for(const url of sources){
+   try{
+    await new Promise((resolve,reject)=>{
+     const script=document.createElement('script');script.src=url;script.async=true;
+     const timer=setTimeout(()=>{script.remove();reject(Error('Laddningen tog för lång tid.'));},15000);
+     script.onload=()=>{clearTimeout(timer);resolve();};
+     script.onerror=()=>{clearTimeout(timer);script.remove();reject(Error('Kunde inte ladda bildbiblioteket.'));};
+     document.head.append(script);
+    });
+    if(typeof window.html2canvas==='function')return window.html2canvas;
+   }catch(e){last=e;}
+  }
+  throw Error('Bildbiblioteket kunde inte laddas. Kontrollera internetanslutningen. '+(last?.message||''));
+ })().catch(e=>{pngLibraryPromise=null;throw e;});
+ return pngLibraryPromise;
+}
+function pngDownload(canvas,name){
+ return new Promise((resolve,reject)=>{
+  try{
+   if(!canvas.toBlob)throw Error('Din webbläsare stöder inte PNG-export här.');
+   canvas.toBlob(blob=>{
+    if(!blob){reject(Error('Kunde inte skapa bildfilen.'));return;}
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download=name;a.style.display='none';
+    document.body.append(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+    resolve();
+   },'image/png');
+  }catch(e){reject(e);}
+ });
+}
+$('export-png').onclick=()=>{
+ if(!board){showMessage('Öppna en tavla innan du exporterar.');return;}
+ feedback('png-feedback','');openDialogQuietly($('png-export-dialog'));
+};
+$('png-cancel').onclick=()=>$('png-export-dialog').close();
+$('png-export-form').onsubmit=async e=>{
+ e.preventDefault();
+ if(!board||!rows.length||!columns.length){feedback('png-feedback','Tavlan måste ha minst en rad och en kolumn.',true);return;}
+ const button=$('png-submit');button.disabled=true;
+ let holder=null;
+ const old={presenting,presentationMode,expandAll,focusedColumn,expanded:new Set(expanded)};
+ try{
+  feedback('png-feedback','Förbereder presentationsvyn…');
+  const capture=await loadPNGEngine();
+  // Använd verklig presentations-rendering och återställ användarens vy efteråt.
+  presenting=true;presentationMode='overview';expandAll=false;focusedColumn=null;expanded.clear();
+  document.body.classList.add('presenting');renderBoard();
+  holder=el('div');holder.id='png-capture-host';holder.setAttribute('aria-hidden','true');
+  holder.append($('presentation-heading').cloneNode(true),$('board').cloneNode(true));
+  document.body.append(holder);
+  const width=1300;
+  const originalHeight=Math.ceil(holder.scrollHeight);
+  const requested=Number($('png-scale').value)||3;
+  // Safaris canvas/gräns för minne är extra känslig på mobil.
+  const mobile=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const maxPixels=mobile?12000000:32000000;
+  const scale=Math.min(requested,Math.sqrt(maxPixels/(width*originalHeight)));
+  const canvasW=Math.ceil(width*scale),canvasH=Math.ceil(originalHeight*scale);
+  if(originalHeight>25000||scale<0.7||canvasW>16000||canvasH>16000){
+   throw Error('Tavlan är för stor för en enda bild i den här webbläsaren. Prova på dator eller minska tavlans innehåll.');
+  }
+  feedback('png-feedback',`Skapar bild (${canvasW} × ${canvasH} pixlar)…`);
+  const canvas=await capture(holder,{
+   backgroundColor:'#f5f7fb',scale,
+   width,height:originalHeight,windowWidth:1500,windowHeight:Math.max(900,originalHeight),
+   scrollX:0,scrollY:0,useCORS:true,logging:false,
+   onclone:doc=>{
+    doc.body.classList.add('presenting','present-overview');
+    doc.body.classList.remove('present-detail');
+    const target=doc.getElementById('png-capture-host');
+    if(target){target.style.left='0px';target.style.top='0px';target.style.position='absolute';target.style.width='1300px';}
+   }
+  });
+  await pngDownload(canvas,pdfSafeName(board.name)+'_'+new Date().toISOString().slice(0,10)+'.png');
+  $('png-export-dialog').close();info('PNG exporterad ✓');
+ }catch(error){feedback('png-feedback','Kunde inte exportera: '+err(error),true);}
+ finally{
+  if(holder)holder.remove();
+  presenting=old.presenting;presentationMode=old.presentationMode;expandAll=old.expandAll;focusedColumn=old.focusedColumn;
+  expanded.clear();for(const id of old.expanded)expanded.add(id);
+  document.body.classList.toggle('presenting',presenting);renderBoard();
+  button.disabled=false;
+ }
+};
+/* ---------------- End PNG export ---------------- */
+
 
 $('start-presentation').onclick=async()=>{if(!board)return;presenting=true;presentationMode='overview';expandAll=false;expanded.clear();focusedColumn=null;document.body.classList.add('presenting');$('start-presentation').hidden=true;$('end-presentation').hidden=false;renderBoard();const area=$('board-area');if(area.requestFullscreen){try{await area.requestFullscreen();}catch{/* iPhone Safari: visningsläge utan native fullscreen */}}};
 $('end-presentation').onclick=endPresentation;
