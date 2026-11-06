@@ -67,7 +67,7 @@ function esc(t){return String(t||'');}
 function pos(arr){return arr.length?Math.max(...arr.map(x=>x.sort_order||0))+1000:1000;}
 async function req(q){const {data,error}=await q;if(error)throw error;return data;}
 function call(t){if(t instanceof Error)throw t;}
-function showMain(section){showOnly('main');updateBottomNav(section);for(const id of ['home','boards','board-area'])$(id).hidden=id!==section;$('button-settings').hidden=section!=='board-area';$('button-add-card').hidden=section!=='board-area';$('button-refresh').hidden=section!=='board-area';$('board-selector').hidden=section!=='board-area';$('crumb').textContent=section==='board-area'?(workspace?.name||'')+' / '+(board?.name||''):workspace?.name||'';}
+function showMain(section){showOnly('main');updateBottomNav(section);for(const id of ['home','boards','board-area'])$(id).hidden=id!==section;$('button-settings').hidden=section!=='board-area';$('button-add-card').hidden=section!=='board-area';$('button-refresh').hidden=section!=='board-area';$('export-pdf').hidden=section!=='board-area';$('board-selector').hidden=section!=='board-area';$('crumb').textContent=section==='board-area'?(workspace?.name||'')+' / '+(board?.name||''):workspace?.name||'';}
 function updateBottomNav(section){
  for(const id of ['nav-home','nav-boards','nav-search','nav-settings'])$(id).classList.remove('active');
  $(section==='home'?'nav-home':'nav-boards').classList.add('active');
@@ -267,6 +267,134 @@ function renderBoard(){if(!board||!$('board-grid'))return;
  root.replaceChildren();if(!rows.length||!columns.length){const empty=el('div','empty','Den här tavlan är tom. Öppna Tavlans inställningar och lägg till minst en rad och en kolumn för att börja.');root.append(empty);$('button-add-card').disabled=true;$('view-all').hidden=true;$('view-label').textContent='Tom tavla';return;}$('button-add-card').disabled=false;if(!presenting)root.append(el('div','corner'));for(const c of cols){const h=el('div','col-head',c.label);h.title='Visa denna kolumn större';h.onclick=()=>{if(window.matchMedia('(max-width:650px)').matches&&!focusedColumn){focusedColumn=c.id;renderBoard();}};root.append(h);}for(const r of rows){if(presenting){const divider=el('div','row-section-divider',r.label);root.append(divider);}const rowIndex=rows.indexOf(r);const band=rowIndex%2?'section-alt':'section-main';if(!presenting){const rh=el('div','row-head '+band,r.label);root.append(rh);}for(const c of cols){const zone=el('section','cell '+band);zone.dataset.row=r.id;zone.dataset.column=c.id;const arr=cards.filter(x=>x.row_id===r.id&&x.column_id===c.id).sort((a,b)=>a.sort_order-b.sort_order);for(let i=0;i<arr.length;i++)zone.append(cardElement(arr[i],arr,i));if(!presenting){const add=el('button','add','＋');add.title='Lägg till här';add.onclick=()=>editCard(null,r.id,c.id);zone.append(add);}root.append(zone);}}$('view-all').hidden=!focusedColumn;$('view-label').textContent=focusedColumn?(columns.find(c=>c.id===focusedColumn)?.label||'Kolumn'):'Tryck på en kolumnrubrik för större vy';}
 $('view-all').onclick=()=>{focusedColumn=null;renderBoard();};
 function endPresentation(){if(!presenting)return;presenting=false;presentationMode='overview';expandAll=false;expanded.clear();$('presentation-card-dialog').close();document.body.classList.remove('presenting');$('end-presentation').hidden=true;$('start-presentation').hidden=false;if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});renderBoard();}
+
+/* ---------------- PDF export 2.5.0 ----------------
+ * Endast redan inlästa tavledata används. Ingen data skickas till exporttjänst.
+ * PDFMake laddas från jsDelivr, men själva dokumentet byggs lokalt i webbläsaren.
+ * 1 cell per kolumn och tabellrad för att kunna bryta sida utan att skära i lappar.
+ */
+const PDFMAKE_VERSION='0.2.20';
+let pdfLibPromise=null;
+function loadPDFLibrary(){
+ if(window.pdfMake?.createPdf && window.pdfMake?.vfs)return Promise.resolve(window.pdfMake);
+ if(pdfLibPromise)return pdfLibPromise;
+ function loadScript(src){return new Promise((resolve,reject)=>{
+  const script=document.createElement('script');script.src=src;script.async=true;
+  script.onload=resolve;script.onerror=()=>reject(Error('Kunde inte ladda PDF-biblioteket. Kontrollera internetanslutningen.'));
+  document.head.append(script);
+ });}
+ pdfLibPromise=(async()=>{
+  const base='https://cdn.jsdelivr.net/npm/pdfmake@'+PDFMAKE_VERSION+'/build/';
+  await loadScript(base+'pdfmake.min.js');
+  await loadScript(base+'vfs_fonts.js');
+  if(!window.pdfMake?.createPdf||!window.pdfMake?.vfs)throw Error('PDF-biblioteket kunde inte startas.');
+  return window.pdfMake;
+ })().catch(e=>{pdfLibPromise=null;throw e;});
+ return pdfLibPromise;
+}
+function pdfText(value){return String(value??'').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g,'').trim();}
+function pdfSafeName(name){return pdfText(name).replace(/[\\/:*?"<>|]/g,'-').replace(/\s+/g,'_').slice(0,70)||'PlanBroW';}
+function pdfMakeCard(card,options,baseFont){
+ const printMode=options.theme==='print';
+ const [paper,accent]=fieldColor(card);
+ const primary=fields.filter(f=>f.is_primary).slice(0,2);
+ const lines=[];
+ const primaryValues=primary.map(f=>pdfText(card.values_json?.[f.id])).filter(Boolean);
+ if(primaryValues.length)lines.push({text:primaryValues.join('  ·  '),fontSize:Math.max(7,baseFont-2),color:printMode?'#556476':'#48617e',margin:[0,0,0,4]});
+ lines.push({text:pdfText(card.title)||'Namnlös lapp',bold:true,fontSize:baseFont,color:'#172e4a'});
+ if(options.content!=='overview'){
+  for(const f of fields){
+   if(options.content==='detail'&&f.is_primary)continue;
+   const value=pdfText(card.values_json?.[f.id]);if(!value)continue;
+   lines.push({text:[{text:pdfText(f.name)+': ',bold:true},value],fontSize:Math.max(7,baseFont-1),color:'#40536b',margin:[0,5,0,0],preserveLeadingSpaces:false});
+  }
+ }
+ return {stack:lines,fillColor:printMode?'#f8f9fb':paper,margin:[9,8,9,9],border:[false,false,false,false]};
+}
+function pdfBoardDefinition(options){
+ if(!board)throw Error('Öppna en tavla först.');
+ if(!columns.length||!rows.length)throw Error('Tavlan behöver minst en rad och en kolumn för export.');
+ const printMode=options.theme==='print';
+ const maxColumns=options.fit?columns.length:(options.paper==='A4'?3:options.paper==='A3'?5:7);
+ const groups=[];
+ for(let offset=0;offset<columns.length;offset+=maxColumns)groups.push(columns.slice(offset,offset+maxColumns));
+ const fs=columns.length>6&&options.fit?8:columns.length>4&&options.fit?9:11;
+ const content=[];
+ content.push({text:pdfText(board.name)||'Planering',style:'docTitle',alignment:'center',margin:[0,0,0,5]});
+ if(options.subtitle&&pdfText(board.subtitle))content.push({text:pdfText(board.subtitle),fontSize:11,color:'#657b93',alignment:'center',margin:[0,0,0,7]});
+ if(options.date)content.push({text:'Exporterad '+new Intl.DateTimeFormat('sv-SE',{dateStyle:'medium',timeStyle:'short'}).format(new Date()),fontSize:9,color:'#657b93',alignment:'center',margin:[0,0,0,9]});
+ const paperDims={A4:[595,842],A3:[842,1191],A2:[1191,1684]};
+ const longSide=paperDims[options.paper][1],shortSide=paperDims[options.paper][0];
+ const pageWidth=options.orientation==='landscape'?longSide:shortSide;
+ content.push({canvas:[{type:'line',x1:0,y1:0,x2:pageWidth-56,y2:0,lineWidth:2,lineColor:printMode?'#c4cdd8':'#e98b31'}],margin:[0,0,0,14]});
+ let hasAnyCard=false;
+ for(const r of rows){
+  for(let gi=0;gi<groups.length;gi++){
+   const group=groups[gi];
+   const byColumn=group.map(c=>cards.filter(x=>x.row_id===r.id&&x.column_id===c.id).sort((a,b)=>a.sort_order-b.sort_order));
+   const longest=Math.max(0,...byColumn.map(a=>a.length));
+   if(longest)hasAnyCard=true;
+   content.push({text:pdfText(r.label)+(groups.length>1?' · Del '+(gi+1)+'/'+groups.length:''),style:'rowTitle',margin:[0,14,0,7]});
+   const cells=[group.map(c=>({text:pdfText(c.label),bold:true,fontSize:Math.max(9,fs),fillColor:printMode?'#e8edf2':'#e5eef7',color:'#203c5b',margin:[7,7,7,7],alignment:'center'}))];
+   if(!longest){cells.push(group.map(()=>({text:'',fillColor:'#ffffff',margin:[0,8,0,8]})));}
+   for(let i=0;i<longest;i++){
+    cells.push(group.map((c,j)=>byColumn[j][i]?pdfMakeCard(byColumn[j][i],options,fs):{text:'',fillColor:'#ffffff'}));
+   }
+   content.push({table:{headerRows:1,dontBreakRows:true,keepWithHeaderRows:1,widths:group.map(()=>'*'),body:cells},
+     layout:{hLineWidth:()=>0,vLineWidth:()=>0,paddingLeft:()=>5,paddingRight:()=>5,paddingTop:()=>5,paddingBottom:()=>5},
+     margin:[0,0,0,5]});
+  }
+ }
+ if(!hasAnyCard)content.push({text:'Inga lappar på tavlan.',italics:true,color:'#657b93',margin:[0,12,0,0]});
+ return {
+  pageSize:options.paper,
+  pageOrientation:options.orientation,
+  pageMargins:[28,32,28,36],
+  defaultStyle:{font:'Roboto',fontSize:fs,color:'#17314e'},
+  styles:{docTitle:{fontSize:Math.max(18,fs+10),bold:true,color:'#173555'},rowTitle:{fontSize:Math.max(12,fs+3),bold:true,color:'#213e5d'}},
+  footer:(current,total)=>({text:`PlanBroW  •  ${current} / ${total}`,fontSize:8,color:'#7b8a9a',alignment:'right',margin:[0,0,30,0]}),
+  content,
+  info:{title:pdfText(board.name)||'PlanBroW',subject:'Exporterad planering från PlanBroW',creator:'PlanBroW 2.5.0'}
+ };
+}
+$('export-pdf').onclick=()=>{
+ if(!board){showMessage('Öppna en tavla för att exportera PDF.');return;}
+ feedback('pdf-feedback','');
+ openDialogQuietly($('pdf-export-dialog'));
+};
+$('pdf-cancel').onclick=()=>$('pdf-export-dialog').close();
+$('pdf-export-form').onsubmit=async e=>{
+ e.preventDefault();
+ if(!board)return;
+ const submit=$('pdf-submit');submit.disabled=true;
+ feedback('pdf-feedback','Förbereder PDF…');
+ const options={
+  paper:$('pdf-paper').value,orientation:$('pdf-orientation').value,
+  content:$('pdf-content').value,theme:$('pdf-theme').value,
+  date:$('pdf-date').checked,subtitle:$('pdf-subtitle').checked,fit:$('pdf-fit').checked
+ };
+ try{
+  const pdfMake=await loadPDFLibrary();
+  feedback('pdf-feedback','Skapar PDF…');
+  const definition=pdfBoardDefinition(options);
+  const filename=pdfSafeName(board.name)+'_'+new Date().toISOString().slice(0,10)+'.pdf';
+  await new Promise((resolve,reject)=>{
+   try{pdfMake.createPdf(definition).getBlob(blob=>{
+     try{
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');a.href=url;a.download=filename;
+      document.body.append(a);a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+      resolve();
+     }catch(e){reject(e);}
+   });}catch(e){reject(e);}
+  });
+  $('pdf-export-dialog').close();info('PDF skapad ✓');
+ }catch(e){feedback('pdf-feedback','Kunde inte exportera: '+err(e),true);}
+ finally{submit.disabled=false;}
+};
+/* ---------------- End PDF export ---------------- */
+
 $('start-presentation').onclick=async()=>{if(!board)return;presenting=true;presentationMode='overview';expandAll=false;expanded.clear();focusedColumn=null;document.body.classList.add('presenting');$('start-presentation').hidden=true;$('end-presentation').hidden=false;renderBoard();const area=$('board-area');if(area.requestFullscreen){try{await area.requestFullscreen();}catch{/* iPhone Safari: visningsläge utan native fullscreen */}}};
 $('end-presentation').onclick=endPresentation;
 document.addEventListener('fullscreenchange',()=>{if(presenting&&!document.fullscreenElement)endPresentation();});
