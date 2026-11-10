@@ -571,7 +571,7 @@ $('add-field').onclick=()=>{if(draft.fields.length>=20)return;draft.fields.push(
 $('board-dialog').addEventListener('cancel',e=>{e.preventDefault();confirmDiscard('board-dialog').then(ok=>{if(ok)$('board-dialog').close();});});
 $('board-cancel').onclick=async()=>{if(await confirmDiscard('board-dialog'))$('board-dialog').close();};
 $('button-settings').onclick=()=>editBoard(board);
-function editBoard(b){editingBoard=Boolean(b);draft={rows:b?rows.map(x=>({...x})):[],cols:b?columns.map(x=>({...x})):[],fields:b?fields.map(x=>({...x,options:(x.options||[]).map(o=>({...o,_originalLabel:o.label}))})):[]};$('board-name').value=b?.name||'';$('board-subtitle').value=b?.subtitle||'';$('board-dialog-title').textContent=b?'Anpassa tavla':'Skapa tavla';$('board-template-section').hidden=!!b;const ds=b?.detail_settings||{};$('board-detail-enabled').checked=!!ds.enabled;const defs={...DETAIL_DEFAULTS,...(ds.defaults||{})};$('detail-default-view').value=defs.view;$('detail-default-scale').value=defs.scale;$('detail-default-from').value=defs.from;$('detail-default-to').value=defs.to;if(!b)updateTemplatePicker();$('board-detail-enabled').onchange();renderDraft();openDialogQuietly($('board-dialog'));rememberForm('board-dialog');}
+function editBoard(b){editingBoard=Boolean(b);draft={rows:b?rows.map(x=>({...x})):[],cols:b?columns.map(x=>({...x})):[],fields:b?fields.map(x=>({...x,options:(x.options||[]).map(o=>({...o,_originalLabel:o.label}))})):[]};$('board-name').value=b?.name||'';$('board-subtitle').value=b?.subtitle||'';$('board-dialog-title').textContent=b?'Anpassa tavla':'Skapa tavla';$('board-template-section').hidden=!!b;const ds=b?.detail_settings||{};$('board-detail-enabled').checked=!!ds.enabled;const defs={...DETAIL_DEFAULTS,...(ds.defaults||{})};$('detail-default-view').value=defs.view;$('detail-default-scale').value=defs.scale;periodEditor('board-periods-editor',periodsFromSettings(defs));if(!b)updateTemplatePicker();$('board-detail-enabled').onchange();renderDraft();openDialogQuietly($('board-dialog'));rememberForm('board-dialog');}
 $('board-form').onsubmit=async e=>{e.preventDefault();if(!e.submitter||e.submitter.tagName!=='BUTTON')return;if(busy)return;const name=$('board-name').value.trim();const subtitle=$('board-subtitle').value.trim();if(!name)return;if($('board-detail-enabled').checked){try{validateWeekRange(detailBoardSettings().defaults);}catch(ex){alert(err(ex));return;}}for(const a of [draft.rows,draft.cols,draft.fields]){if(a.some(x=>!String(x.label??x.name).trim())){alert('Alla rader, kolumner och fält behöver ett namn.');return;}}if(draft.fields.filter(f=>f.is_primary).length>2){alert('Max två primära fält.');return;}if(draft.fields.filter(f=>f.color_source).length>1){alert('Högst ett färgstyrande fält.');return;}
 // Fältalternativ sparas som text i varje lapp. Spåra namnändringar innan vi ändrar fältdefinitioner.
  const renames=[];const deleted=[];
@@ -675,12 +675,38 @@ $('register-form').onsubmit=async e=>{e.preventDefault();const email=$('register
 $('button-forgot').onclick=()=>{$('forgot-email').value=$('email').value.trim();feedback('forgot-feedback','');openDialogQuietly($('forgot-dialog'));};
 $('forgot-form').onsubmit=async e=>{e.preventDefault();const btn=e.submitter;btn.disabled=true;feedback('forgot-feedback','Skickar…');try{const {error}=await sb.auth.resetPasswordForEmail($('forgot-email').value.trim(),{redirectTo:window.location.origin+window.location.pathname});if(error)throw error;feedback('forgot-feedback','Om adressen har ett konto skickas ett återställningsmejl. Kontrollera även skräpposten.');}catch(x){feedback('forgot-feedback','Kunde inte skicka mejlet: '+err(x),true);}finally{btn.disabled=false;}};
 $('recovery-form').onsubmit=async e=>{e.preventDefault();const password=$('recovery-password').value;if(password!==$('recovery-confirm').value){feedback('recovery-feedback','Lösenorden matchar inte.',true);return;}const btn=e.submitter;btn.disabled=true;feedback('recovery-feedback','Sparar…');try{const {error}=await sb.auth.updateUser({password});if(error)throw error;feedback('recovery-feedback','Lösenordet är ändrat! Logga in med det nya lösenordet.');$('recovery-password').value='';$('recovery-confirm').value='';recoveryMode=false;history.replaceState(null,'',window.location.pathname);await sb.auth.signOut();setTimeout(()=>{$('recovery-dialog').close();showOnly('auth');feedback('auth-feedback','Lösenordet är uppdaterat. Logga in med ditt nya lösenord.');},300);}catch(x){feedback('recovery-feedback',err(x),true);}finally{btn.disabled=false;}};
-/* PlanBroW 2.6.0 – nivå 2 är en vy av samma lappar, inte en extra tavla. */
-const DETAIL_DEFAULTS={view:'timeline',scale:'week',from:1,to:53};
-function detailBoardSettings(){return {enabled:$('board-detail-enabled').checked,defaults:{view:$('detail-default-view').value,scale:$('detail-default-scale').value,from:Number($('detail-default-from').value),to:Number($('detail-default-to').value)},years:{...(editingBoard?board?.detail_settings?.years||{}:{})}};}
-function readDetailSettings(){const ds=board?.detail_settings||{};return {enabled:!!ds.enabled,defaults:{...DETAIL_DEFAULTS,...(ds.defaults||{})},years:{...(ds.years||{})}};}
-function yearSettings(year){const s=readDetailSettings();return {...s.defaults,...(s.years[year]||{})};}
-function validateWeekRange(input){let from=Math.round(Number(input.from)),to=Math.round(Number(input.to));if(!Number.isFinite(from)||!Number.isFinite(to)||from<1||to>53||to<from)throw Error('Välj ett giltigt veckointervall (1–53) där slutveckan inte är före startveckan.');return {...input,from,to};}
+/* PlanBroW 2.6.1 – veckoperioder kan anpassas per år. */
+const BASE_PERIODS=[{name:'Vårservice',from:5,to:10},{name:'Höstservice',from:40,to:46}];
+const DETAIL_DEFAULTS={view:'timeline',scale:'day',periods:BASE_PERIODS};
+function copyPeriods(arr){return (Array.isArray(arr)?arr:BASE_PERIODS).map(p=>({name:String(p.name||'Period'),from:Number(p.from),to:Number(p.to)}));}
+function validatePeriods(periods){
+ if(!periods.length||periods.length>12)throw Error('Välj 1–12 perioder per år.');
+ const clean=periods.map(p=>({name:String(p.name||'').trim(),from:Number(p.from),to:Number(p.to)}));
+ for(const p of clean){if(!p.name||!Number.isInteger(p.from)||!Number.isInteger(p.to)||p.from<1||p.to>53||p.to<p.from)throw Error('Ge alla perioder namn och ange giltiga hela veckor (1–53).');}
+ const sorted=[...clean].sort((a,b)=>a.from-b.from);
+ for(let i=1;i<sorted.length;i++)if(sorted[i].from<=sorted[i-1].to)throw Error('Perioderna får inte överlappa.');
+ return clean;
+}
+function periodsFromSettings(s){
+ if(Array.isArray(s.periods)&&s.periods.length)return copyPeriods(s.periods);
+ if(s.from!=null&&s.to!=null&&Number(s.from)<=Number(s.to)&&!(Number(s.from)===1&&Number(s.to)===53))return [{name:'Planeringsperiod',from:Number(s.from),to:Number(s.to)}];
+ return copyPeriods(BASE_PERIODS);
+}
+function normalizedDetail(s){return {...DETAIL_DEFAULTS,...s,scale:s?.scale==='week'?'week':'day',periods:periodsFromSettings(s||{})};}
+function periodEditor(id,periods){const host=$(id);host.replaceChildren();for(const item of periods){const line=el('div','period-line');
+ const mk=(label,type,value)=>{const field=el('label','control',label),input=el('input');input.type=type;input.value=value;if(type==='number'){input.min=1;input.max=53;input.step=1;}field.append(input);line.append(field);return input;};
+ mk('Periodnamn','text',item.name).maxLength=70;mk('Från vecka','number',item.from);mk('Till vecka','number',item.to);
+ const del=el('button','','✕');del.type='button';del.title='Ta bort period';del.onclick=()=>{line.remove();if(id==='year-periods-editor')$('year-inherit').checked=false;toggleYearInputs();};line.append(del);host.append(line);
+ if(id==='year-periods-editor')line.addEventListener('input',()=>{$('year-inherit').checked=false;toggleYearInputs();});
+ }}
+function collectPeriods(id){return validatePeriods([...$(id).children].map(line=>{const inputs=line.querySelectorAll('input');return {name:inputs[0].value,from:Number(inputs[1].value),to:Number(inputs[2].value)};}));}
+function addPeriod(id){const arr=[...$(id).children].map(line=>{const ins=line.querySelectorAll('input');return {name:ins[0].value,from:Number(ins[1].value),to:Number(ins[2].value)};});if(arr.length>=12){alert('Max 12 perioder.');return;}arr.push({name:'Ny period',from:Math.min(53,(arr.at(-1)?.to||0)+1),to:Math.min(53,(arr.at(-1)?.to||0)+1)});periodEditor(id,arr);if(id==='year-periods-editor')$('year-inherit').checked=false;toggleYearInputs();}
+$('board-add-period').onclick=()=>addPeriod('board-periods-editor');
+$('year-add-period').onclick=()=>addPeriod('year-periods-editor');
+function detailBoardSettings(){return {enabled:$('board-detail-enabled').checked,defaults:{view:$('detail-default-view').value,scale:$('detail-default-scale').value,periods:collectPeriods('board-periods-editor')},years:{...(editingBoard?board?.detail_settings?.years||{}:{})}};}
+function readDetailSettings(){const ds=board?.detail_settings||{};return {enabled:!!ds.enabled,defaults:normalizedDetail(ds.defaults||{}),years:{...(ds.years||{})}};}
+function yearSettings(year){const s=readDetailSettings();return normalizedDetail({...s.defaults,...(s.years[year]||{})});}
+function validateWeekRange(input){return {...input,periods:validatePeriods(periodsFromSettings(input))};}
 function showDetailPanels(show){$('year-detail').hidden=!show;$('board').hidden=show;$('presentation-heading').hidden=true;$('viewbar').hidden=show;$('board-area').classList.toggle('detail-active',show);const ctrl=$('board-area').querySelector('.presentation-controls');ctrl.hidden=show;$('board-area').querySelector('.hint').hidden=show;$('button-settings').hidden=show;$('button-add-card').hidden=show;}
 function openDetailYear(id){if(!board?.detail_settings?.enabled)return;const row=rows.find(x=>x.id===id);if(!row||!/^20\d{2}$/.test(row.label.trim()))return;detailYear=id;detailViewOverride=null;showDetailPanels(true);renderDetailYear();$('year-detail').scrollIntoView({block:'start'});}
 function leaveDetailYear(){detailYear=null;detailViewOverride=null;showDetailPanels(false);$('button-settings').hidden=false;$('button-add-card').hidden=false;renderBoard();}
@@ -704,32 +730,129 @@ function renderDetailYear(){if(!detailYear||!board)return;const r=rows.find(x=>x
  const select=$('year-filter'),previous=select.value;select.replaceChildren();const all=el('option','','Alla kategorier');all.value='';select.append(all);
  if(catField){for(const opt of (catField.options||[])){const x=el('option','',opt.label);x.value=opt.label;select.append(x);}}if([...select.options].some(x=>x.value===previous))select.value=previous;
  const arr=cards.filter(c=>c.row_id===r.id&&(!select.value||c.values_json?.[catField?.id]===select.value)&&(!$('year-status-filter').value||detailCardInfo(c).status===$('year-status-filter').value));
- $('year-hint').textContent=arr.length+' aktiviteter · '+(settings.scale==='week'?'Veckovy':'Kompakt månadsöversikt')+' · Klicka på en aktivitet för att ange vecka, datum och planerad stopptid.';
- if(view==='timeline')renderYearTimeline(arr,settings,year);else renderYearList(arr,year);
+ $('year-hint').textContent=arr.length+' aktiviteter · '+settings.periods.length+' perioder · '+(settings.scale==='week'?'Veckovisning':'Dagsvisning')+' · Klicka på en aktivitet för att ange datum och stopptid.';
+ if(view==='timeline')renderYearTimeline(arr,settings,year);else{$('year-untimed').hidden=true;renderYearList(arr,year);}
 }
-function renderYearTimeline(arr,settings,year){const host=$('year-timeline');host.replaceChildren();const from=settings.from,to=settings.to,count=to-from+1,width=settings.scale==='month'?27:43;
- const inner=el('div','year-timeline-inner');inner.style.setProperty('--weeks',count);inner.style.setProperty('--weekw',width+'px');
- const header=el('div','year-weeks');header.append(el('div','year-week-corner','Linje / aktivitet'));
- for(let w=from;w<=to;w++){const x=el('span','year-week',settings.scale==='month'&&w%2===0?'':('v'+w));x.style.gridColumn=String(w-from+2);header.append(x);}inner.append(header);
- for(const card of arr){const meta=detailCardInfo(card),span=scheduleSpan(meta,year),[paper,edge]=yearColor(card);const track=el('div','year-track');const label=el('div','year-track-title');label.append(makeYearEdit(card));track.append(label);const cells=el('div','year-gridcells');for(let i=0;i<count;i++)cells.append(el('span'));track.append(cells);
- if(span&&span[1]>=from&&span[0]<=to){const bar=el('button','year-bar',card.title+(meta.downtime!==''?' · '+meta.downtime+' '+meta.unit:''));bar.style.gridColumn=(Math.max(span[0],from)-from+2)+' / '+(Math.min(span[1],to)-from+3);bar.style.setProperty('--paper',paper);bar.style.setProperty('--edge',edge);bar.title=card.title+' – '+weekLabel(meta)+' – '+meta.status;bar.onclick=()=>editYearActivity(card.id);track.append(bar);}else{const no=el('button','year-bar','＋ Ej tidsatt');no.style.gridColumn='2 / '+(Math.min(count+2,7));no.style.setProperty('--paper',paper);no.style.setProperty('--edge',edge);no.onclick=()=>editYearActivity(card.id);track.append(no);}inner.append(track);}
- if(!arr.length)inner.append(el('p','muted','Inga aktiviteter i den här årsvyn. Lägg till lappar på grovplaneringen.'));
- host.append(inner);
+function isoUTC(s){const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s||'');if(!m)return null;const d=new Date(Date.UTC(+m[1],+m[2]-1,+m[3]));return d.getUTCFullYear()===+m[1]&&d.getUTCMonth()===+m[2]-1&&d.getUTCDate()===+m[3]?d:null;}
+function isoDay(d){return d.toISOString().slice(0,10);}
+function mondayOfISOWeek(year,week){const jan4=new Date(Date.UTC(year,0,4)),weekday=(jan4.getUTCDay()+6)%7;jan4.setUTCDate(jan4.getUTCDate()-weekday+(week-1)*7);return jan4;}
+function incrementDay(d,n){const copy=new Date(d);copy.setUTCDate(copy.getUTCDate()+n);return copy;}
+function renderYearTimeline(arr,settings,year){
+ const host=$('year-timeline');host.replaceChildren();const periods=validatePeriods(settings.periods).sort((a,b)=>a.from-b.from);
+ const planned=arr.filter(c=>{const x=detailCardInfo(c);return isoUTC(x.start)&&isoUTC(x.end)&&x.end>=x.start;});
+ const untimed=arr.filter(c=>!planned.includes(c));
+ for(const [idx,p] of periods.entries()){
+  const countWeeks=p.to-p.from+1,fromDate=mondayOfISOWeek(year,p.from),toDate=incrementDay(mondayOfISOWeek(year,p.to),6),numDays=countWeeks*(settings.scale==='week'?1:7);
+  const section=el('section','detail-period');section.dataset.periodIndex=String(idx);
+  const head=el('div','detail-period-header');head.append(el('h3','',p.name+' · v'+p.from+'–v'+p.to),el('span','','Planering '+year));section.append(head);
+  const scroll=el('div','detail-period-scroll');const inner=el('div','detail-period-inner');inner.style.setProperty('--days',numDays);
+  inner.style.setProperty('--dayw',settings.scale==='week'?'62px':'29px');
+  const weekRow=el('div','detail-week-row');weekRow.append(el('div','detail-fixed-label','Linje / aktivitet'));
+  for(let w=p.from;w<=p.to;w++){const span=el('div','detail-week-head','v'+w);span.style.gridColumn=(2+(w-p.from)*(settings.scale==='week'?1:7))+' / span '+(settings.scale==='week'?1:7);weekRow.append(span);}inner.append(weekRow);
+  if(settings.scale!=='week'){const days=el('div','detail-day-row');days.append(el('div','detail-fixed-label','Veckodag'));for(let d=0;d<numDays;d++){const date=incrementDay(fromDate,d);const mark=el('div','detail-day-head'+(d%7>=5?' weekend':''),['M','T','O','T','F','L','S'][d%7]+' '+date.getUTCDate());mark.style.gridColumn=String(d+2);days.append(mark);}inner.append(days);}
+  let shown=0;
+  for(const card of planned){const meta=detailCardInfo(card),begin=isoUTC(meta.start),finish=isoUTC(meta.end);if(finish<fromDate||begin>toDate)continue;shown++;
+   const [paper,edge]=yearColor(card),line=el('div','detail-service-row');const label=el('div','detail-fixed-label');label.append(makeYearEdit(card));line.append(label);
+   const grid=el('div','detail-day-grid');for(let d=0;d<numDays;d++){const cell=el('span',settings.scale!=='week'&&d%7>=5?'weekend':'');grid.append(cell);}line.append(grid);
+   const clippedStart=begin<fromDate?fromDate:begin,clippedEnd=finish>toDate?toDate:finish;
+   const startUnits=settings.scale==='week'?Math.floor((clippedStart-fromDate)/604800000):Math.round((clippedStart-fromDate)/86400000);
+   const endUnits=settings.scale==='week'?Math.floor((clippedEnd-fromDate)/604800000):Math.round((clippedEnd-fromDate)/86400000);
+   const bar=el('button','detail-service-bar',card.title+(meta.downtime!==''?' · '+meta.downtime+' '+meta.unit:''));bar.type='button';bar.style.gridColumn=(2+startUnits)+' / '+(3+endUnits);bar.style.setProperty('--paper',paper);bar.style.setProperty('--edge',edge);bar.title=card.title+' • '+meta.start+' – '+meta.end+' • '+meta.status;bar.onclick=()=>editYearActivity(card.id);line.append(bar);inner.append(line);
+  }
+  if(!shown){const empty=el('p','muted','Inga tidsatta aktiviteter i den här perioden.');empty.style.padding='14px';inner.append(empty);}
+  scroll.append(inner);section.append(scroll);host.append(section);
+ }
+ const outside=planned.filter(c=>{const m=detailCardInfo(c),s=isoUTC(m.start),e=isoUTC(m.end);return !periods.some(p=>e>=mondayOfISOWeek(year,p.from)&&s<=incrementDay(mondayOfISOWeek(year,p.to),6));});
+ const untimedHost=$('year-untimed');untimedHost.replaceChildren();untimedHost.hidden=!untimed.length&&!outside.length;
+ function appendExtras(title,items){if(!items.length)return;untimedHost.append(el('h3','',title+' ('+items.length+')'));const wrap=el('div','year-untimed-cards');for(const card of items){const [paper,edge]=yearColor(card),btn=el('button','',card.title);btn.type='button';btn.style.setProperty('--paper',paper);btn.style.setProperty('--edge',edge);btn.onclick=()=>editYearActivity(card.id);wrap.append(btn);}untimedHost.append(wrap);}
+ appendExtras('Ej tidsatta aktiviteter',untimed);appendExtras('Utanför valda perioder',outside);
 }
 function renderYearList(arr,year){const host=$('year-list');host.replaceChildren();const table=el('table');const head=el('thead');const tr=el('tr');for(const text of ['Aktivitet','Kategori','Vecka','Start','Slut','Planerad stopptid','Status'])tr.append(el('th','',text));head.append(tr);table.append(head);const body=el('tbody');const catField=fields.find(f=>f.color_source)||fields.find(f=>f.is_primary);
  for(const card of arr){const info=detailCardInfo(card),tr=el('tr');const first=el('td');first.append(makeYearEdit(card));tr.append(first);for(const val of [card.values_json?.[catField?.id]||'—',weekLabel(info),info.start||'—',info.end||'—',info.downtime!==''?info.downtime+' '+info.unit:'—',info.status])tr.append(el('td','',val));body.append(tr);}table.append(body);host.append(table);if(!arr.length)host.append(el('p','muted','Inga aktiviteter matchar filtret.'));}
-$('year-settings').onclick=()=>{if(!detailYear)return;const year=rows.find(r=>r.id===detailYear)?.label;const ds=readDetailSettings();const override=ds.years[year];const val={...ds.defaults,...(override||{})};$('year-settings-title').textContent='Inställningar · '+year;$('year-inherit').checked=!override;$('year-config-view').value=val.view;$('year-config-scale').value=val.scale;$('year-config-from').value=val.from;$('year-config-to').value=val.to;toggleYearInputs();openDialogQuietly($('year-settings-dialog'));};
-function toggleYearInputs(){$('year-overrides').querySelectorAll('input,select').forEach(e=>e.disabled=$('year-inherit').checked);}
+$('year-settings').onclick=()=>{if(!detailYear)return;const year=rows.find(r=>r.id===detailYear)?.label,ds=readDetailSettings(),override=ds.years[year];const val=yearSettings(year);
+ $('year-settings-title').textContent='Inställningar · '+year;$('year-inherit').checked=!override;
+ $('year-config-view').value=val.view;$('year-config-scale').value=val.scale;periodEditor('year-periods-editor',val.periods);toggleYearInputs();openDialogQuietly($('year-settings-dialog'));
+};
+function toggleYearInputs(){$('year-overrides').classList.toggle('inheriting',$('year-inherit').checked);}
 $('year-inherit').onchange=toggleYearInputs;
-$('year-settings-form').onsubmit=async e=>{e.preventDefault();if(!detailYear||busy)return;const year=rows.find(r=>r.id===detailYear)?.label;const ds=readDetailSettings();if($('year-inherit').checked)delete ds.years[year];else{try{ds.years[year]=validateWeekRange({view:$('year-config-view').value,scale:$('year-config-scale').value,from:$('year-config-from').value,to:$('year-config-to').value});}catch(ex){alert(err(ex));return;}}try{busy=true;const updated=await req(sb.from('pd_boards').update({detail_settings:ds}).eq('id',board.id).select('*').single());board=updated;boards=boards.map(b=>b.id===board.id?board:b);detailViewOverride=null;$('year-settings-dialog').close();renderDetailYear();info('Årsinställningar sparade ✓');}catch(ex){alert('Kunde inte spara årsinställningar: '+err(ex));}finally{busy=false;}};
-function editYearActivity(id){const card=cards.find(x=>x.id===id);if(!card)return;detailEditingCard=id;const info=detailCardInfo(card);$('year-card-heading').textContent=card.title;$('year-card-context').textContent='Samma lapp på '+board.name+' · '+rows.find(r=>r.id===card.row_id)?.label;$('year-card-start').value=info.start;$('year-card-end').value=info.end;$('year-card-downtime').value=info.downtime;$('year-card-unit').value=info.unit;$('year-card-status').value=info.status;openDialogQuietly($('year-card-dialog'));}
+for(const id of ['year-config-view','year-config-scale'])$(id).onchange=()=>{$('year-inherit').checked=false;toggleYearInputs();};
+$('year-settings-form').onsubmit=async e=>{e.preventDefault();if(!detailYear||busy)return;
+ const year=rows.find(r=>r.id===detailYear)?.label,ds=readDetailSettings();
+ if($('year-inherit').checked)delete ds.years[year];else{
+  try{ds.years[year]={view:$('year-config-view').value,scale:$('year-config-scale').value,periods:collectPeriods('year-periods-editor')};}catch(ex){alert(err(ex));return;}
+ }
+ try{busy=true;const updated=await req(sb.from('pd_boards').update({detail_settings:ds}).eq('id',board.id).select('*').single());board=updated;boards=boards.map(b=>b.id===board.id?board:b);detailViewOverride=null;$('year-settings-dialog').close();renderDetailYear();info('Årsinställningar sparade ✓');}
+ catch(ex){alert('Kunde inte spara årsinställningar: '+err(ex));}finally{busy=false;}
+};
+function editYearActivity(id){const card=cards.find(x=>x.id===id);if(!card)return;detailEditingCard=id;const info=detailCardInfo(card);$('year-card-heading').textContent=card.title;$('year-card-context').textContent='Samma lapp på '+board.name+' · '+rows.find(r=>r.id===card.row_id)?.label;$('year-card-start').value=info.start;$('year-card-end').value=info.end;$('year-card-start-picker').value=info.start;$('year-card-end-picker').value=info.end;$('year-card-end').dataset.autofill=info.end?'false':'true';$('year-card-downtime').value=info.downtime;$('year-card-unit').value=info.unit;$('year-card-status').value=info.status;$('year-card-start').dataset.previousStart=info.start;openDialogQuietly($('year-card-dialog'));}
+// Använd svensk ISO-visning oberoende av webbläsarens datumplaceholder.
+function setYearEndFromStart(){const begin=$('year-card-start').value.trim(),end=$('year-card-end');if(!isoUTC(begin))return;
+ const old=$('year-card-start').dataset.previousStart||'';
+ if(!end.value||end.dataset.autofill==='true')end.value=begin;
+ else if(old&&isoUTC(old)&&isoUTC(end.value)){
+  const days=Math.round((isoUTC(end.value)-isoUTC(old))/86400000);
+  end.value=isoDay(incrementDay(isoUTC(begin),Math.max(0,days)));
+ }
+ if(end.value<begin)end.value=begin;
+ end.dataset.autofill='true';$('year-card-start').dataset.previousStart=begin;
+ $('year-card-end-picker').value=end.value;$('year-card-end-picker').min=begin;
+}
+$('year-card-start').addEventListener('change',setYearEndFromStart);
+$('year-card-end').addEventListener('change',()=>{$('year-card-end').dataset.autofill='false';});
+for(const input of ['year-card-start-picker','year-card-end-picker'])$(input).addEventListener('change',()=>{
+ const target=input==='year-card-start-picker'?'year-card-start':'year-card-end';$(target).value=$(input).value;
+ if(target==='year-card-start')setYearEndFromStart();else $('year-card-end').dataset.autofill='false';
+});
+for(const b of document.querySelectorAll('[data-date-picker]'))b.onclick=()=>{
+ const picker=$(b.dataset.datePicker),textInput=$(b.dataset.datePicker.replace('-picker',''));
+ picker.value=isoUTC(textInput.value)?textInput.value:'';
+ if(picker.id==='year-card-end-picker'&&isoUTC($('year-card-start').value))picker.min=$('year-card-start').value;
+ try{picker.showPicker();}catch{picker.style.pointerEvents='auto';picker.focus();picker.click();picker.style.pointerEvents='none';}
+};
 $('year-card-main-edit').onclick=()=>{const id=detailEditingCard;$('year-card-dialog').close();editCard(id);};
 $('year-card-form').onsubmit=async e=>{e.preventDefault();if(busy)return;const card=cards.find(x=>x.id===detailEditingCard);if(!card)return;const start=$('year-card-start').value,end=$('year-card-end').value,raw=$('year-card-downtime').value;
  if((start&&!end)||(!start&&end)){alert('Ange både start- och slutdatum, eller lämna båda tomma.');return;}
- if(start&&end&&end<start){alert('Slutdatum kan inte ligga före startdatum.');return;}
+ if((start&&!isoUTC(start))||(end&&!isoUTC(end))){alert('Ange giltiga datum som ÅÅÅÅ-MM-DD, exempelvis 2027-10-18.');return;}if(start&&end&&end<start){alert('Slutdatum kan inte ligga före startdatum.');return;}
  const downtime=raw===''?'':Number(raw);if(raw!==''&&(!Number.isFinite(downtime)||downtime<0||downtime>3650)){alert('Ange en giltig stopptid.');return;}
  const values={...(card.values_json||{}),_planbrow_detail:{start,end,downtime,unit:$('year-card-unit').value,status:$('year-card-status').value}};
  try{busy=true;const updated=await req(sb.from('pd_cards').update({values_json:values}).eq('id',card.id).eq('updated_at',card.updated_at).select('*'));if(updated.length!==1)throw Error('Lappen har ändrats av någon annan. Uppdatera och försök igen.');$('year-card-dialog').close();await reloadBoard();info('Detaljplanering sparad ✓');}catch(ex){alert('Kunde inte spara: '+err(ex));}finally{busy=false;}};
+$('year-export-png').onclick=()=>{
+ if(!detailYear)return;const opts=$('year-png-period');opts.replaceChildren();let all=el('option','','Alla perioder');all.value='all';opts.append(all);
+ const year=rows.find(r=>r.id===detailYear)?.label;
+ yearSettings(year).periods.forEach((p,i)=>{const opt=el('option','',p.name+' · v'+p.from+'–v'+p.to);opt.value=String(i);opts.append(opt);});
+ feedback('year-png-feedback','');openDialogQuietly($('year-png-dialog'));
+};
+$('year-png-cancel').onclick=()=>$('year-png-dialog').close();
+$('year-png-form').onsubmit=async e=>{
+ e.preventDefault();if(!detailYear)return;const btn=$('year-png-submit');btn.disabled=true;let clone=null;
+ const viewSave=detailViewOverride;
+ try{
+  feedback('year-png-feedback','Förbereder tidslinjen…');const capture=await loadPNGEngine();
+  detailViewOverride='timeline';renderDetailYear();
+  const choice=$('year-png-period').value;
+  clone=el('div');clone.id='detail-png-capture';clone.style.cssText='position:absolute;left:-18000px;top:0;background:#f5f7fb;padding:28px;width:1400px;box-sizing:border-box;color:#17324d;';
+  clone.append(el('h1','',board.name+' · '+rows.find(r=>r.id===detailYear)?.label+' – Detaljplanering'));
+  if(board.subtitle)clone.append(el('p','',board.subtitle));
+  const source=$('year-timeline').cloneNode(true);source.removeAttribute('id');
+  if(choice!=='all')source.querySelectorAll('.detail-period').forEach(s=>{if(s.dataset.periodIndex!==choice)s.remove();});
+  // Dokumentbredd styrs av längsta valda tidslinje, så exporten inte kapas av intern scroll.
+  source.style.cssText='width:max-content;min-width:100%;display:block;';
+  source.querySelectorAll('.detail-period-scroll').forEach(x=>{x.style.overflow='visible';x.style.maxWidth='none';});
+  clone.append(source);
+  if(choice==='all'&&!$('year-untimed').hidden)clone.append($('year-untimed').cloneNode(true));
+  document.body.append(clone);
+  const width=Math.max(1400,Math.ceil(source.scrollWidth+56));clone.style.width=width+'px';
+  const height=Math.ceil(clone.scrollHeight),requested=Number($('year-png-scale').value)||3,mobile=/iPhone|iPad|iPod/i.test(navigator.userAgent),maxPixels=mobile?12000000:32000000;
+  const scale=Math.min(requested,Math.sqrt(maxPixels/(width*height)),16000/width,16000/height);
+  if(scale<0.55||height>25000)throw Error('Bilden är för stor. Välj en period eller lägre upplösning.');
+  feedback('year-png-feedback','Skapar bild ('+Math.round(width*scale)+' × '+Math.round(height*scale)+' pixlar)…');
+  const canvas=await capture(clone,{backgroundColor:'#f5f7fb',scale,width,height,windowWidth:Math.max(1450,width),windowHeight:Math.max(900,height),scrollX:0,scrollY:0,useCORS:true,logging:false,onclone:doc=>{const x=doc.getElementById('detail-png-capture');if(x){x.style.left='0px';x.style.top='0px';}}});
+  const year=rows.find(r=>r.id===detailYear)?.label;
+  await pngDownload(canvas,pdfSafeName(board.name)+'_'+year+'_detalj_'+(choice==='all'?'alla_perioder':'period_'+(Number(choice)+1))+'.png');
+  $('year-png-dialog').close();info('Detaljplanering exporterad ✓');
+ }catch(ex){feedback('year-png-feedback','Kunde inte exportera: '+err(ex),true);}
+ finally{clone?.remove();detailViewOverride=viewSave;renderDetailYear();btn.disabled=false;}
+};
 $('board-detail-enabled').onchange=()=>{$('board-detail-defaults').querySelectorAll('input,select').forEach(x=>x.disabled=!$('board-detail-enabled').checked);};
 // Pull-to-refresh, endast i mobilens översikt vid sidans topp.
 let startY=null,pull=0;
