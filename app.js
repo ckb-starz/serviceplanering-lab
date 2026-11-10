@@ -730,7 +730,7 @@ function renderDetailYear(){if(!detailYear||!board)return;const r=rows.find(x=>x
  const select=$('year-filter'),previous=select.value;select.replaceChildren();const all=el('option','','Alla kategorier');all.value='';select.append(all);
  if(catField){for(const opt of (catField.options||[])){const x=el('option','',opt.label);x.value=opt.label;select.append(x);}}if([...select.options].some(x=>x.value===previous))select.value=previous;
  const arr=cards.filter(c=>c.row_id===r.id&&(!select.value||c.values_json?.[catField?.id]===select.value)&&(!$('year-status-filter').value||detailCardInfo(c).status===$('year-status-filter').value));
- $('year-hint').textContent=arr.length+' aktiviteter · '+settings.periods.length+' perioder · '+(settings.scale==='week'?'Veckovisning':'Dagsvisning')+' · Klicka på en aktivitet för att ange datum och stopptid.';
+ $('year-hint').textContent=arr.length+' aktiviteter · '+settings.periods.length+' perioder · '+(settings.scale==='week'?'Veckovisning':'Dagsvisning')+' · Dra aktiviteter för att planera, flytta eller ändra längd. Klicka för att redigera.';
  if(view==='timeline')renderYearTimeline(arr,settings,year);else{$('year-untimed').hidden=true;renderYearList(arr,year);}
 }
 function isoUTC(s){const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s||'');if(!m)return null;const d=new Date(Date.UTC(+m[1],+m[2]-1,+m[3]));return d.getUTCFullYear()===+m[1]&&d.getUTCMonth()===+m[2]-1&&d.getUTCDate()===+m[3]?d:null;}
@@ -757,18 +757,122 @@ function renderYearTimeline(arr,settings,year){
    const clippedStart=begin<fromDate?fromDate:begin,clippedEnd=finish>toDate?toDate:finish;
    const startUnits=settings.scale==='week'?Math.floor((clippedStart-fromDate)/604800000):Math.round((clippedStart-fromDate)/86400000);
    const endUnits=settings.scale==='week'?Math.floor((clippedEnd-fromDate)/604800000):Math.round((clippedEnd-fromDate)/86400000);
-   const bar=el('button','detail-service-bar',card.title+(meta.downtime!==''?' · '+meta.downtime+' '+meta.unit:''));bar.type='button';bar.style.gridColumn=(2+startUnits)+' / '+(3+endUnits);bar.style.setProperty('--paper',paper);bar.style.setProperty('--edge',edge);bar.title=card.title+' • '+meta.start+' – '+meta.end+' • '+meta.status;bar.onclick=()=>editYearActivity(card.id);line.append(bar);inner.append(line);
+   const bar=el('button','detail-service-bar');bar.type='button';bar.dataset.detailDrag='move';bar.dataset.cardId=card.id;bar.dataset.periodIndex=idx;bar.dataset.year=year;bar.style.gridColumn=(2+startUnits)+' / '+(3+endUnits);bar.style.setProperty('--paper',paper);bar.style.setProperty('--edge',edge);bar.title=card.title+' • '+meta.start+' – '+meta.end+' • '+meta.status+' • Dra för att flytta, dra i kanterna för att ändra datum';
+   const labelText=el('span','detail-bar-text',card.title+(meta.downtime!==''?' · '+meta.downtime+' '+meta.unit:''));bar.append(labelText);
+   for(const side of ['start','end']){const grip=el('span','detail-bar-handle '+side,'');grip.dataset.detailDrag=side;grip.dataset.cardId=card.id;grip.setAttribute('aria-hidden','true');bar.append(grip);}
+   bar.onclick=()=>{if(Date.now()-detailDragSuppressAt>450)editYearActivity(card.id);};line.append(bar);inner.append(line);
   }
   if(!shown){const empty=el('p','muted','Inga tidsatta aktiviteter i den här perioden.');empty.style.padding='14px';inner.append(empty);}
   scroll.append(inner);section.append(scroll);host.append(section);
  }
  const outside=planned.filter(c=>{const m=detailCardInfo(c),s=isoUTC(m.start),e=isoUTC(m.end);return !periods.some(p=>e>=mondayOfISOWeek(year,p.from)&&s<=incrementDay(mondayOfISOWeek(year,p.to),6));});
  const untimedHost=$('year-untimed');untimedHost.replaceChildren();untimedHost.hidden=!untimed.length&&!outside.length;
- function appendExtras(title,items){if(!items.length)return;untimedHost.append(el('h3','',title+' ('+items.length+')'));const wrap=el('div','year-untimed-cards');for(const card of items){const [paper,edge]=yearColor(card),btn=el('button','',card.title);btn.type='button';btn.style.setProperty('--paper',paper);btn.style.setProperty('--edge',edge);btn.onclick=()=>editYearActivity(card.id);wrap.append(btn);}untimedHost.append(wrap);}
- appendExtras('Ej tidsatta aktiviteter',untimed);appendExtras('Utanför valda perioder',outside);
+ function appendExtras(title,items,allowDrag=false){if(!items.length&&!allowDrag)return;untimedHost.append(el('h3','',title+' ('+items.length+')'));const wrap=el('div','year-untimed-cards');for(const card of items){const [paper,edge]=yearColor(card),btn=el('button','',card.title);btn.type='button';btn.style.setProperty('--paper',paper);btn.style.setProperty('--edge',edge);btn.dataset.cardId=card.id;if(allowDrag)btn.dataset.detailDrag='untimed';btn.title=allowDrag?'Dra till en veckodag för att tidsätta • tryck för att redigera':'Tryck för att redigera';btn.onclick=()=>{if(Date.now()-detailDragSuppressAt>450)editYearActivity(card.id);};wrap.append(btn);}untimedHost.append(wrap);}
+ appendExtras('Ej tidsatta aktiviteter',untimed,true);appendExtras('Utanför valda perioder',outside);
+ const dropHelp=el('p','detail-untimed-help','Dra en otidsatt aktivitet till en dag i tidslinjen. Dra ett planerat block hit för att ta bort datum.');untimedHost.append(dropHelp);
+ untimedHost.hidden=false;
 }
 function renderYearList(arr,year){const host=$('year-list');host.replaceChildren();const table=el('table');const head=el('thead');const tr=el('tr');for(const text of ['Aktivitet','Kategori','Vecka','Start','Slut','Planerad stopptid','Status'])tr.append(el('th','',text));head.append(tr);table.append(head);const body=el('tbody');const catField=fields.find(f=>f.color_source)||fields.find(f=>f.is_primary);
  for(const card of arr){const info=detailCardInfo(card),tr=el('tr');const first=el('td');first.append(makeYearEdit(card));tr.append(first);for(const val of [card.values_json?.[catField?.id]||'—',weekLabel(info),info.start||'—',info.end||'—',info.downtime!==''?info.downtime+' '+info.unit:'—',info.status])tr.append(el('td','',val));body.append(tr);}table.append(body);host.append(table);if(!arr.length)host.append(el('p','muted','Inga aktiviteter matchar filtret.'));}
+/* PlanBroW 2.6.2 — Interaktiv tidssättning, flytt och storleksändring på tidslinjen.
+   Samma pd_cards-post används alltid. Datumen sparas först vid släpp. */
+let detailDragSuppressAt=0,detailPointer=null;
+function detailPeriodAt(x,y){
+ const sections=[...$('year-timeline').querySelectorAll('.detail-period')];
+ for(const section of sections){const scroll=section.querySelector('.detail-period-scroll'),rect=scroll.getBoundingClientRect();
+  if(y<rect.top||y>rect.bottom||x<rect.left||x>rect.right)continue;
+  const inner=section.querySelector('.detail-period-inner'),label=inner.querySelector('.detail-fixed-label');
+  const labelWidth=label.getBoundingClientRect().width,gridWidth=inner.getBoundingClientRect().width-labelWidth;
+  const settings=yearSettings(rows.find(r=>r.id===detailYear)?.label);const period=validatePeriods(settings.periods).sort((a,b)=>a.from-b.from)[Number(section.dataset.periodIndex)];
+  if(!period)continue;
+  const isWeek=settings.scale==='week',count=(period.to-period.from+1)*(isWeek?1:7);
+  const unitWidth=gridWidth/count;
+  const from=mondayOfISOWeek(Number(rows.find(r=>r.id===detailYear)?.label),period.from);
+  const left=rect.left+labelWidth-scroll.scrollLeft;
+  const index=Math.floor((x-left)/unitWidth);
+  if(index<0||index>=count)continue;
+  return {section,scroll,period,index,unitWidth,count,from,date:incrementDay(from,index*(isWeek?7:1)),step:isWeek?7:1,left};
+ }
+ return null;
+}
+function detailDragClear(state){
+ state.ghost?.remove();state.tooltip?.remove();
+ $('year-timeline').querySelectorAll('.detail-drop-target,.detail-drag-origin,.detail-drop-marker').forEach(n=>n.classList.contains('detail-drop-marker')?n.remove():n.classList.remove('detail-drop-target','detail-drag-origin'));
+ $('year-untimed').classList.remove('detail-untimed-target');
+}
+function detailDragPreview(state,e){
+ const p=detailPeriodAt(e.clientX,e.clientY);const box=$('year-untimed').getBoundingClientRect();
+ const untimed=state.mode==='move'&&state.scheduled&&e.clientX>=box.left&&e.clientX<=box.right&&e.clientY>=box.top&&e.clientY<=box.bottom;
+ $('year-untimed').classList.toggle('detail-untimed-target',!!untimed);
+ $('year-timeline').querySelectorAll('.detail-drop-target,.detail-drop-marker').forEach(n=>{if(n.classList.contains('detail-drop-marker'))n.remove();else n.classList.remove('detail-drop-target');});
+ state.target=null;state.clear=!!untimed;
+ if(p){
+  const year=Number(rows.find(r=>r.id===detailYear)?.label);
+  const settings=yearSettings(String(year));
+  if(state.mode==='move'){
+   const offset=state.scheduled?state.grabOffset:0;
+   const begin=incrementDay(p.date,-offset),end=incrementDay(begin,state.duration);
+   state.target={start:isoDay(begin),end:isoDay(end),period:p.period.name};
+  }else{
+   const original=state.mode==='start'?state.start:state.end;
+   const delta=Math.round((e.clientX-state.downX)/p.unitWidth)*p.step;
+   const proposed=incrementDay(original,delta);
+   if(state.mode==='start'){const safe=proposed>state.end?state.end:proposed;state.target={start:isoDay(safe),end:isoDay(state.end),period:p.period.name};}
+   else{const safe=proposed<state.start?state.start:proposed;state.target={start:isoDay(state.start),end:isoDay(safe),period:p.period.name};}
+  }
+  p.scroll.classList.add('detail-drop-target');
+  const marker=el('div','detail-drop-marker');marker.style.left=(p.left-p.scroll.getBoundingClientRect().left+p.index*p.unitWidth)+'px';p.scroll.append(marker);
+ }
+ if(state.tooltip){state.tooltip.textContent=untimed?'Ta bort datumen (bekräfta vid släpp)':state.target?(state.target.start+' → '+state.target.end):'Släpp på en dag i tidslinjen';state.tooltip.style.left=Math.min(window.innerWidth-225,Math.max(8,e.clientX+12))+'px';state.tooltip.style.top=Math.max(8,e.clientY-46)+'px';}
+ if(state.ghost){state.ghost.style.left=(e.clientX-state.offsetX)+'px';state.ghost.style.top=(e.clientY-state.offsetY)+'px';}
+}
+async function detailSaveDrag(card,start,end){
+ if(busy)return;const old=detailCardInfo(card);if(old.start===start&&old.end===end)return;
+ if(!start&&!end){const ok=await confirmAction('Vill du ta bort start- och slutdatum för '+card.title+'? Stopptiden och övriga uppgifter behålls.','Ta bort tidsättning');if(!ok)return;}
+ if(start&&(!isoUTC(start)||!isoUTC(end)||end<start)){showMessage('Ogiltiga datum. Ingen ändring gjord.');return;}
+ const values={...(card.values_json||{}),_planbrow_detail:{...(card.values_json?._planbrow_detail||{}),start,end}};
+ try{busy=true;info('Sparar tidsplanering…');const result=await req(sb.from('pd_cards').update({values_json:values}).eq('id',card.id).eq('updated_at',card.updated_at).select('*'));
+  if(result.length!==1)throw Error('Aktiviteten har ändrats sedan du öppnade den. Uppdatera och försök igen.');
+  await reloadBoard();info(start?'Datum uppdaterade ✓':'Aktiviteten är nu ej tidsatt ✓');
+ }catch(ex){showMessage('Kunde inte spara ändringen: '+err(ex));await reloadBoard().catch(()=>{});}finally{busy=false;}
+}
+function detailStopPointer(){if(!detailPointer)return;const s=detailPointer;detailPointer=null;clearTimeout(s.timer);detailDragClear(s);document.removeEventListener('pointermove',detailMovePointer);document.removeEventListener('pointerup',detailEndPointer);document.removeEventListener('pointercancel',detailCancelPointer);}
+function detailBeginPointer(s){if(s.active)return;s.active=true;detailDragSuppressAt=Date.now();s.source.classList.add('detail-drag-origin');
+ if(s.mode==='move'){
+  s.ghost=s.source.cloneNode(true);s.ghost.querySelectorAll('.detail-bar-handle').forEach(n=>n.remove());s.ghost.className='detail-pointer-ghost';s.ghost.removeAttribute('data-detail-drag');s.ghost.style.width=Math.min(260,Math.max(115,s.source.getBoundingClientRect().width))+'px';s.ghost.style.setProperty('--paper',s.source.style.getPropertyValue('--paper'));s.ghost.style.setProperty('--edge',s.source.style.getPropertyValue('--edge'));document.body.append(s.ghost);
+ }
+ s.tooltip=el('div','detail-pointer-tooltip');document.body.append(s.tooltip);
+}
+function detailMovePointer(e){const s=detailPointer;if(!s||e.pointerId!==s.id)return;const distance=Math.hypot(e.clientX-s.downX,e.clientY-s.downY);
+ if(!s.active){if(s.touch){if(distance>10){detailStopPointer();}return;}if(distance<5)return;detailBeginPointer(s);}
+ if(e.cancelable)e.preventDefault();detailDragPreview(s,e);
+}
+function detailCancelPointer(e){if(detailPointer&&e.pointerId===detailPointer.id)detailStopPointer();}
+function detailEndPointer(e){const s=detailPointer;if(!s||e.pointerId!==s.id)return;
+ const didMove=s.active,drop=s.target,clear=s.clear;detailStopPointer();
+ if(!didMove)return;detailDragSuppressAt=Date.now();
+ if(clear){if(s.scheduled)void detailSaveDrag(s.card,'','');return;}
+ if(drop){void detailSaveDrag(s.card,drop.start,drop.end);}
+}
+$('year-detail').addEventListener('pointerdown',e=>{
+ if(busy||!detailYear||$('year-timeline').hidden||e.button!==0)return;
+ const source=e.target.closest('[data-detail-drag]');if(!source)return;
+ const card=cards.find(c=>c.id===source.dataset.cardId);if(!card)return;
+ if(detailPointer)detailStopPointer();
+ const mode=source.dataset.detailDrag,bar=source.closest('.detail-service-bar'),meta=detailCardInfo(card);
+ const start=isoUTC(meta.start),end=isoUTC(meta.end),rect=(bar||source).getBoundingClientRect(),touch=e.pointerType==='touch';
+ const s={id:e.pointerId,source:bar||source,card,mode:mode==='untimed'?'move':mode,scheduled:!!start&&!!end,start,end,duration:start&&end?Math.round((end-start)/86400000):0,
+  downX:e.clientX,downY:e.clientY,offsetX:e.clientX-rect.left,offsetY:e.clientY-rect.top,active:false,ghost:null,tooltip:null,target:null,clear:false,touch};
+ if(start&&s.mode==='move'){
+  const period=detailPeriodAt(e.clientX,e.clientY);s.grabOffset=period?Math.max(0,Math.min(s.duration,Math.round((period.date-start)/86400000))):0;
+ }
+ detailPointer=s;
+ document.addEventListener('pointermove',detailMovePointer,{passive:false});document.addEventListener('pointerup',detailEndPointer);document.addEventListener('pointercancel',detailCancelPointer);
+ if(touch){s.timer=setTimeout(()=>{if(detailPointer===s)detailBeginPointer(s);},330);}else if(mode==='start'||mode==='end'){detailBeginPointer(s);}
+});
+// Undvik att ett klick direkt efter ett avslutat drag öppnar redigeringsdialogen.
+$('year-detail').addEventListener('click',e=>{if(Date.now()-detailDragSuppressAt<450&&e.target.closest('[data-detail-drag]')){e.preventDefault();e.stopImmediatePropagation();}},true);
+
 $('year-settings').onclick=()=>{if(!detailYear)return;const year=rows.find(r=>r.id===detailYear)?.label,ds=readDetailSettings(),override=ds.years[year];const val=yearSettings(year);
  $('year-settings-title').textContent='Inställningar · '+year;$('year-inherit').checked=!override;
  $('year-config-view').value=val.view;$('year-config-scale').value=val.scale;periodEditor('year-periods-editor',val.periods);toggleYearInputs();openDialogQuietly($('year-settings-dialog'));
