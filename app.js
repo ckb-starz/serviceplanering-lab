@@ -86,7 +86,7 @@ function esc(t){return String(t||'');}
 function pos(arr){return arr.length?Math.max(...arr.map(x=>x.sort_order||0))+1000:1000;}
 async function req(q){const {data,error}=await q;if(error)throw error;return data;}
 function call(t){if(t instanceof Error)throw t;}
-function showMain(section){showOnly('main');updateBottomNav(section);for(const id of ['home','boards','board-area'])$(id).hidden=id!==section;$('button-settings').hidden=section!=='board-area';$('button-add-card').hidden=section!=='board-area';$('button-refresh').hidden=section!=='board-area';$('export-pdf').hidden=true;$('export-png').hidden=section!=='board-area';$('board-selector').hidden=section!=='board-area';renderBreadcrumb(section);}
+function showMain(section){showOnly('main');updateBottomNav(section);for(const id of ['home','boards','board-area'])$(id).hidden=id!==section;$('button-settings').hidden=section!=='board-area';$('button-add-card').hidden=section!=='board-area';$('button-refresh').hidden=section!=='board-area';$('export-pdf').hidden=true;$('export-png').hidden=true;$('board-tools').hidden=section!=='board-area';$('board-selector').hidden=section!=='board-area';renderBreadcrumb(section);}
 function renderBreadcrumb(section){
  const root=$('crumb');root.replaceChildren();
  const homeLink=el('button','crumb-link','Arbetsytor');homeLink.type='button';homeLink.onclick=()=>home().catch(e=>showMessage(err(e)));root.append(homeLink);
@@ -484,6 +484,7 @@ function pngDownload(canvas,name){
   }catch(e){reject(e);}
  });
 }
+$('export-png-menu').onclick=()=>{$('board-tools').open=false;$('export-png').click();};
 $('export-png').onclick=()=>{
  if(!board){showMessage('Öppna en tavla innan du exporterar.');return;}
  feedback('png-feedback','');openDialogQuietly($('png-export-dialog'));
@@ -645,7 +646,7 @@ boards=await req(sb.from('pd_boards').select('*').eq('workspace_id',workspace.id
 await openBoard(bid);
 info('Tavlan sparad ✓');
 }catch(x){alert('Kunde inte spara allt: '+err(x)+'\nUppdatera tavlan innan du försöker igen.');if(board)await reloadBoard().catch(()=>{});}finally{busy=false;}};
-async function duplicateBoard(id){const original=boards.find(b=>b.id===id);const newName=await ask('Duplicera tavla','Alla rader, kolumner, fält och lappar kopieras. Originalet påverkas inte.','Nytt namn',original.name+' (kopia)');if(!newName)return;try{const [r,c,f,n]=await Promise.all(['pd_rows','pd_columns','pd_fields','pd_cards'].map(t=>req(sb.from(t).select('*').eq('board_id',id).order('sort_order'))));const newBoard=await req(sb.from('pd_boards').insert({workspace_id:workspace.id,name:newName,...(original.subtitle?{subtitle:original.subtitle}:{}),...(original.detail_settings?{detail_settings:original.detail_settings}:{})}).select().single());const rowMap=new Map(),colMap=new Map(),fieldMap=new Map();for(const [table,items,map] of [['pd_rows',r,rowMap],['pd_columns',c,colMap],['pd_fields',f,fieldMap]])for(const x of items){const payload={board_id:newBoard.id,sort_order:x.sort_order};if(table==='pd_fields')Object.assign(payload,{name:x.name,kind:x.kind,is_primary:x.is_primary,color_source:x.color_source,options:x.options});else payload.label=x.label;const newer=await req(sb.from(table).insert(payload).select().single());map.set(x.id,newer.id);}for(const x of n){const values={};for(const [key,val] of Object.entries(x.values_json||{})){if(fieldMap.has(key))values[fieldMap.get(key)]=val;else if(key==='_planbrow_detail')values[key]=val;}await req(sb.from('pd_cards').insert({board_id:newBoard.id,row_id:rowMap.get(x.row_id),column_id:colMap.get(x.column_id),title:x.title,values_json:values,sort_order:x.sort_order}));}await openWorkspace(workspace.id);info('Tavlan kopierad ✓');}catch(e){alert('Kopieringen kunde inte slutföras: '+err(e));}};
+async function duplicateBoard(id){const original=boards.find(b=>b.id===id);const newName=await ask('Duplicera tavla','Alla rader, kolumner, fält och lappar kopieras. Originalet påverkas inte.','Nytt namn',original.name+' (kopia)');if(!newName)return;try{const [r,c,f,n]=await Promise.all(['pd_rows','pd_columns','pd_fields','pd_cards'].map(t=>req(sb.from(t).select('*').eq('board_id',id).order('sort_order'))));const newBoard=await req(sb.from('pd_boards').insert({workspace_id:workspace.id,name:newName,...(original.subtitle?{subtitle:original.subtitle}:{}),...(original.detail_settings?{detail_settings:original.detail_settings}:{})}).select().single());const rowMap=new Map(),colMap=new Map(),fieldMap=new Map();for(const [table,items,map] of [['pd_rows',r,rowMap],['pd_columns',c,colMap],['pd_fields',f,fieldMap]])for(const x of items){const payload={board_id:newBoard.id,sort_order:x.sort_order};if(table==='pd_fields')Object.assign(payload,{name:x.name,kind:x.kind,is_primary:x.is_primary,color_source:x.color_source,options:x.options});else payload.label=x.label;const newer=await req(sb.from(table).insert(payload).select().single());map.set(x.id,newer.id);}for(const x of n){const values={};for(const [key,val] of Object.entries(x.values_json||{})){if(fieldMap.has(key))values[fieldMap.get(key)]=val;else if(key==='_planbrow_detail'||key==='_planbrow_import')values[key]=val;}await req(sb.from('pd_cards').insert({board_id:newBoard.id,row_id:rowMap.get(x.row_id),column_id:colMap.get(x.column_id),title:x.title,values_json:values,sort_order:x.sort_order}));}await openWorkspace(workspace.id);info('Tavlan kopierad ✓');}catch(e){alert('Kopieringen kunde inte slutföras: '+err(e));}};
 async function deleteBoard(id){
  const target=boards.find(b=>b.id===id);if(!target)return;
  if(!await confirmAction('Ta bort tavlan ”'+target.name+'” och alla dess lappar? Detta går inte att ångra.','Ta bort tavla?',true))return;
@@ -731,7 +732,7 @@ function detailBoardSettings(){return {enabled:$('board-detail-enabled').checked
 function readDetailSettings(){const ds=board?.detail_settings||{};return {enabled:!!ds.enabled,defaults:normalizedDetail(ds.defaults||{}),years:{...(ds.years||{})}};}
 function yearSettings(year){const s=readDetailSettings();return normalizedDetail({...s.defaults,...(s.years[year]||{})});}
 function validateWeekRange(input){return {...input,periods:validatePeriods(periodsFromSettings(input))};}
-function showDetailPanels(show){$('year-detail').hidden=!show;$('board').hidden=show;$('presentation-heading').hidden=true;$('viewbar').hidden=show;$('board-area').classList.toggle('detail-active',show);const ctrl=$('board-area').querySelector('.presentation-controls');ctrl.hidden=show;$('board-area').querySelector('.hint').hidden=show;$('button-settings').hidden=show;$('button-add-card').hidden=show;}
+function showDetailPanels(show){$('year-detail').hidden=!show;$('board').hidden=show;$('presentation-heading').hidden=true;$('viewbar').hidden=show;$('board-area').classList.toggle('detail-active',show);const ctrl=$('board-area').querySelector('.presentation-controls');ctrl.hidden=show;$('board-tools').hidden=show;$('board-area').querySelector('.hint').hidden=show;$('button-settings').hidden=show;$('button-add-card').hidden=show;}
 function openDetailYear(id){if(!board?.detail_settings?.enabled)return;const row=rows.find(x=>x.id===id);if(!row||!/^20\d{2}$/.test(row.label.trim()))return;detailYear=id;detailViewOverride=null;showDetailPanels(true);renderDetailYear();$('year-detail').scrollIntoView({block:'start'});}
 function leaveDetailYear(){detailYear=null;detailViewOverride=null;showDetailPanels(false);$('button-settings').hidden=false;$('button-add-card').hidden=false;renderBoard();}
 $('year-back').onclick=leaveDetailYear;
@@ -1011,3 +1012,134 @@ const area=$('board-area');area.addEventListener('touchstart',e=>{if(window.matc
 area.addEventListener('touchmove',e=>{if(startY===null||e.touches.length!==1)return;pull=Math.max(0,Math.min(90,e.touches[0].clientY-startY));$('pull-indicator').style.height=(pull*.55)+'px';$('pull-indicator').textContent=pull>65?'Släpp för att uppdatera':'↻ Dra ned för att uppdatera';},{passive:true});
 area.addEventListener('touchend',()=>{if(startY!==null&&pull>65)reloadBoard().catch(e=>info(err(e)));startY=null;pull=0;$('pull-indicator').style.height='0';},{passive:true});
 try{const saved=JSON.parse(localStorage.getItem(CONN)||'null');if(saved?.url&&saved?.key){$('url').value=saved.url;$('key').value=saved.key;connect(saved.url,saved.key).catch(e=>{showOnly('config');info(err(e));});}else{showOnly('config');$('url').value='https://huxqiwgvsjedjlaaztif.supabase.co';}}catch(e){showOnly('config');info(err(e));}
+
+
+// PlanBroW 2.7.0 – manuell import från MaintMaster. Endast lokalt filval -> förhandsgranskning -> aktiv tavla.
+let mmImportRows=[],mmImportBoardId=null,mmXlsxLoader=null;
+const MM_COLUMNS=['Nummer','Typ','Ansvarig Avdelning','Huvudobjekt','Anläggningsobjekt','Rubrik','Start','Slut','Ansvarig','Support','Riskbedömning utförd?','Status','Kommentar'];
+const MM_FIELD_NAMES={Nummer:'AO-nummer',Typ:'Typ','Ansvarig Avdelning':'Ansvarig avdelning',Huvudobjekt:'Huvudobjekt','Anläggningsobjekt':'Anläggningsobjekt',Ansvarig:'Ansvarig',Support:'Support','Riskbedömning utförd?':'Riskbedömning utförd?',Status:'Status',Kommentar:'Kommentar'};
+function mmNorm(v){return String(v??'').trim().replace(/\s+/g,' ');}
+function mmDate(value){
+ if(value===null||value===undefined||value==='')return '';
+ const raw=String(value).trim();if(!raw)return '';
+ const d=/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})(?:\s.*)?$/.exec(raw);
+ const e=/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})(?:\s.*)?$/.exec(raw);
+ let date='';
+ if(d)date=`${d[1]}-${d[2].padStart(2,'0')}-${d[3].padStart(2,'0')}`;
+ else if(e)date=`${e[3]}-${e[2].padStart(2,'0')}-${e[1].padStart(2,'0')}`;
+ else if(/^\d+(?:[.,]\d+)?$/.test(raw)){
+  const num=Number(raw.replace(',','.'));if(!Number.isInteger(Math.floor(num))||num<1||num>90000)return null;
+  const timestamp=Date.UTC(1899,11,30)+Math.floor(num)*86400000;
+  date=new Date(timestamp).toISOString().slice(0,10);
+ } else return null;
+ const parsed=new Date(date+'T00:00:00Z');return !Number.isNaN(parsed.valueOf())&&parsed.toISOString().slice(0,10)===date?date:null;
+}
+async function mmLoadXlsx(){
+ if(window.XLSX)return window.XLSX;
+ if(mmXlsxLoader)return mmXlsxLoader;
+ mmXlsxLoader=(async()=>{let error;
+  for(const src of ['https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js','https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js','https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js']){
+   try{await new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.onload=resolve;s.onerror=()=>{s.remove();reject(new Error('Biblioteket kunde inte laddas.'));};document.head.append(s);});if(window.XLSX)return window.XLSX;}catch(e){error=e;}
+  }
+  throw new Error('Kunde inte ladda Excel-läsaren. Kontrollera nätverksanslutningen. '+(error?.message||''));
+ })();try{return await mmXlsxLoader;}finally{mmXlsxLoader=null;}
+}
+function mmRowsFromSheet(XLSX,ws){
+ const grid=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,blankrows:false});
+ const key=v=>mmNorm(v).toLocaleLowerCase('sv-SE').replace(/\s+/g,'');
+ const at=grid.findIndex(r=>r.some(x=>key(x)==='nummer')&&r.some(x=>key(x)==='rubrik'));
+ if(at<0)throw new Error('Hittade inte kolumnrubrikerna Nummer och Rubrik i Excel-filen.');
+ const headers=grid[at].map(v=>mmNorm(v));const indexes={};for(const col of MM_COLUMNS){const idx=headers.findIndex(v=>key(v)===key(col));if(idx>=0)indexes[col]=idx;}
+ const seen=new Set(),existing=new Set(cards.map(c=>mmNorm(c.values_json?._planbrow_import?.ao)).filter(Boolean));
+ const imported=grid.slice(at+1).filter(r=>r.some(v=>mmNorm(v))).map((row,index)=>{
+  const values={};for(const col of MM_COLUMNS)values[col]=indexes[col]===undefined?'':col==='Kommentar'?String(row[indexes[col]]??'').trim():mmNorm(row[indexes[col]]);
+  const ao=values.Nummer,title=values.Rubrik;
+  const start=mmDate(values.Start),end=mmDate(values.Slut);
+  let error='';if(!ao)error='AO-nummer saknas';else if(!title)error='Rubrik saknas';else if(seen.has(ao))error='Dubblett i filen';else if(existing.has(ao))error='Finns redan på tavlan';else if(start===null||end===null)error='Ogiltigt datum';else if(start&&end&&end<start)error='Slut före start';else if((start&&!end)||(!start&&end))error='Start och slut måste båda anges';
+  seen.add(ao);
+  const year=start?.slice(0,4)||'';
+  const rowTarget=rows.find(r=>mmNorm(r.label)===year)?.id||$('excel-fallback-year').value||rows[0]?.id;
+  const spring=columns.find(c=>/vår/i.test(c.label));const autumn=columns.find(c=>/höst/i.test(c.label));
+  const columnTarget=start&&(spring||autumn)?(Number(start.slice(5,7))<=6?(spring||autumn):(autumn||spring)).id:$('excel-fallback-col').value||columns[0]?.id;
+  const colorField=fields.find(f=>f.color_source&&f.kind==='select');const options=colorField?.options||[];const object=values.Huvudobjekt.toLocaleLowerCase('sv');const ref=(object.match(/(?:linje\s*|\bl)(\d+)\b/)||[])[1];const opt=options.find(o=>{const label=o.label.toLocaleLowerCase('sv');const optRef=(label.match(/(?:linje\s*|\bl)(\d+)\b/)||[])[1];return (ref&&optRef===ref)||!!(object&&label&&(object.includes(label)||label.includes(object)));});
+  return {sourceLine:at+index+2,values,ao,title,start,end,rowTarget,columnTarget,category:opt?.label||'',yearNeedsChoice:!!(year&&!rows.some(r=>mmNorm(r.label)===year)),error};
+ });
+ if(imported.length>2000)throw new Error('Filen innehåller mer än 2 000 jobb. Dela upp den i mindre filer.');
+ return imported;
+}
+function mmPreview(){
+ const root=$('excel-preview-table');root.replaceChildren();const head=el('thead'),tr=el('tr');for(const x of ['AO-nummer','Rubrik','Start','Slut','Rad','Kolumn','Kategori/färg','Resultat'])tr.append(el('th','',x));head.append(tr);root.append(head);
+ const body=el('tbody');for(const item of mmImportRows){const tr=el('tr');tr.append(el('td','',item.ao),el('td','',item.title),el('td','',item.start||'–'),el('td','',item.end||'–'));
+  const rowSel=el('select');rowSel.setAttribute('aria-label','Rad för '+item.ao);for(const r of rows){const opt=el('option','',r.label);opt.value=r.id;rowSel.append(opt);}rowSel.value=item.rowTarget;rowSel.disabled=!!item.error;rowSel.onchange=()=>{item.rowTarget=rowSel.value;item.yearNeedsChoice=false;mmPreview();};const rowCell=el('td');rowCell.append(rowSel);tr.append(rowCell);
+  const colSel=el('select');colSel.setAttribute('aria-label','Kolumn för '+item.ao);for(const c of columns){const opt=el('option','',c.label);opt.value=c.id;colSel.append(opt);}colSel.value=item.columnTarget;colSel.disabled=!!item.error;colSel.onchange=()=>{item.columnTarget=colSel.value;};const colCell=el('td');colCell.append(colSel);tr.append(colCell);
+  tr.append(el('td',(item.error||item.yearNeedsChoice)?'warning':'',''+(item.error||(item.yearNeedsChoice?'Året saknas – välj rad':'Ny ✓'))));body.append(tr);
+ }
+ root.append(body);$('excel-preview-wrap').hidden=!mmImportRows.length;
+ const valid=mmImportRows.filter(r=>!r.error&&!r.yearNeedsChoice).length;
+ $('excel-import-summary').textContent=`${mmImportRows.length} jobb i filen · ${valid} kan importeras · ${mmImportRows.length-valid} hoppas över`;
+ $('excel-import-confirm').disabled=!valid||!board||board.id!==mmImportBoardId||busy;
+}
+$('import-excel').onclick=()=>{
+ $('board-tools').open=false;
+ if(!board||!rows.length||!columns.length){showMessage('Tavlan måste ha minst en rad och en kolumn innan Excel-importen kan användas.');return;}
+ mmImportRows=[];mmImportBoardId=board.id;$('excel-board-label').textContent='Måltavla: '+board.name;
+ const yr=$('excel-fallback-year'),cl=$('excel-fallback-col');yr.replaceChildren();cl.replaceChildren();for(const r of rows){const o=el('option','',r.label);o.value=r.id;yr.append(o);}for(const c of columns){const o=el('option','',c.label);o.value=c.id;cl.append(o);}
+ $('excel-file').value='';$('excel-preview-table').replaceChildren();$('excel-preview-wrap').hidden=true;$('excel-import-summary').textContent='';feedback('excel-import-feedback','');$('excel-import-confirm').disabled=true;openDialogQuietly($('excel-import-dialog'));
+};
+$('excel-import-close').onclick=()=>{$('excel-import-dialog').close();mmImportRows=[];};
+$('excel-file').addEventListener('change',async e=>{
+ const file=e.target.files?.[0];mmImportRows=[];mmPreview();if(!file)return;
+ if(!/\.(xlsx|xls)$/i.test(file.name)){feedback('excel-import-feedback','Välj en fil av typen .xlsx eller .xls.',true);return;}
+ if(file.size>10*1024*1024){feedback('excel-import-feedback','Filen är för stor (max 10 MB).',true);return;}
+ feedback('excel-import-feedback','Läser Excel-filen…');
+ try{const xlsx=await mmLoadXlsx();const data=await file.arrayBuffer();if(mmImportBoardId!==board?.id)return;
+  const wb=xlsx.read(data,{type:'array',cellDates:false});let imported=null,problem='';
+  for(const name of wb.SheetNames){try{imported=mmRowsFromSheet(xlsx,wb.Sheets[name]);break;}catch(ex){problem=ex.message;}}
+  if(!imported)throw Error(problem||'Ingen kompatibel flik hittades.');mmImportRows=imported;mmPreview();feedback('excel-import-feedback','Förhandsgranskning klar. Kontrollera rad och kolumn före importen.');
+ }catch(ex){feedback('excel-import-feedback',err(ex),true);$('excel-import-confirm').disabled=true;}
+});
+for(const id of ['excel-fallback-year','excel-fallback-col'])$(id).addEventListener('change',()=>{
+ for(const item of mmImportRows)if(!item.start){if(id==='excel-fallback-year')item.rowTarget=$('excel-fallback-year').value;else item.columnTarget=$('excel-fallback-col').value;}mmPreview();
+});
+async function mmEnsureFields(importItems){
+ const mapped={};const existingByName=new Map(fields.map(f=>[mmNorm(f.name).toLocaleLowerCase('sv'),f]));
+ for(const [source,name] of Object.entries(MM_FIELD_NAMES)){
+  if(!importItems.some(i=>i.values[source]))continue;
+  let f=existingByName.get(name.toLocaleLowerCase('sv'));
+  if(!f){f=await req(sb.from('pd_fields').insert({board_id:board.id,name,kind:source==='Kommentar'?'textarea':'text',sort_order:pos(fields),is_primary:false,color_source:false,options:[]}).select('*').single());fields.push(f);existingByName.set(name.toLocaleLowerCase('sv'),f);}
+  mapped[source]=f;
+ }
+ return mapped;
+}
+$('excel-import-confirm').onclick=async()=>{
+ if(busy||!board||board.id!==mmImportBoardId)return;
+ const selected=mmImportRows.filter(x=>!x.error&&!x.yearNeedsChoice);
+ if(!selected.length)return;
+ if(!await confirmAction('Importera '+selected.length+' nya jobb till tavlan ”'+board.name+'”? Befintliga lappar uppdateras inte.','Bekräfta Excel-import'))return;
+ busy=true;$('excel-import-confirm').disabled=true;let inserted=0,partialFailure='';
+ try{
+  // Läs alltid om befintliga AO-nr från Supabase innan vi skriver.
+  const latest=await req(sb.from('pd_cards').select('values_json').eq('board_id',board.id));
+  const numbers=new Set(latest.map(c=>mmNorm(c.values_json?._planbrow_import?.ao)).filter(Boolean));
+  const fresh=selected.filter(x=>!numbers.has(x.ao)&&rows.some(r=>r.id===x.rowTarget)&&columns.some(c=>c.id===x.columnTarget));
+  const map=await mmEnsureFields(fresh);const payload=[];
+  for(const item of fresh){
+   const values={_planbrow_import:{source:'MaintMaster Excel',ao:item.ao}};
+   const catField=fields.find(f=>f.color_source&&f.kind==='select');if(catField&&item.category)values[catField.id]=item.category;
+   for(const [source,field] of Object.entries(map)){
+    let v=item.values[source];if(!v)continue;
+    if(field.kind==='select'){
+     if((field.options||[]).some(o=>o.label===v))values[field.id]=v;
+    }else values[field.id]=v;
+   }
+   const status=['Preliminär','Planerad','Bekräftad','Klar'].find(s=>s.toLocaleLowerCase('sv')===item.values.Status.toLocaleLowerCase('sv'))||'Preliminär';
+   values._planbrow_detail={start:item.start||'',end:item.end||'',downtime:'',unit:'dagar',status};
+   payload.push({board_id:board.id,row_id:item.rowTarget,column_id:item.columnTarget,title:item.title,values_json:values,sort_order:pos(cards)+payload.length*1000});
+  }
+  // Dela upp stora importer i hanterbara batcher. Fel efter en batch rapporteras tydligt.
+  for(let i=0;i<payload.length;i+=40){await req(sb.from('pd_cards').insert(payload.slice(i,i+40)));inserted+=Math.min(40,payload.length-i);feedback('excel-import-feedback',`Sparat ${inserted} av ${payload.length} jobb…`);}
+  $('excel-import-dialog').close();await reloadBoard();info(inserted+' jobb importerade till '+board.name+' ✓');
+  showMessage(`Importen är klar!\n${inserted} nya jobb skapades.\n${selected.length-inserted} jobb hoppades över (exempelvis dubbletter).`);
+ }catch(ex){partialFailure=err(ex);feedback('excel-import-feedback',`Importen avbröts efter ${inserted} jobb. ${partialFailure} Kontrollera resultatet innan du försöker igen.`,true);await reloadBoard().catch(()=>{});}
+ finally{busy=false;$('excel-import-confirm').disabled=!!partialFailure||!mmImportRows.some(r=>!r.error&&!r.yearNeedsChoice);}
+};
