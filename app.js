@@ -748,77 +748,95 @@ function detailCardInfo(card){const meta=card.values_json?._planbrow_detail||{};
 // Manuellt värde lagras separat från schemalagd längd; datum påverkar aldrig uppskattningen.
 function syncStopForm(){const start=isoUTC($('year-card-start').value.trim()),end=isoUTC($('year-card-end').value.trim());const scheduled=!!(start&&end&&end>=start),input=$('year-card-downtime'),unit=$('year-card-unit');input.disabled=unit.disabled=scheduled;if(scheduled){input.value=Math.round((end-start)/86400000)+1;unit.value='dagar';$('year-stop-help').textContent='Automatiskt: kalenderdagar inklusive start- och slutdatum. Den manuella uppskattningen behålls i bakgrunden.';}else{input.value=manualStopDraft.value;unit.value=manualStopDraft.unit;$('year-stop-help').textContent='Uppskattning tills aktiviteten tidsätts.';}}
 let manualStopDraft={value:'',unit:'dagar'};
+// 2.7.5: Oberoende zoom per planeringsperiod. Inställningarna sparas endast lokalt.
 function detailZoomDefault(){return window.matchMedia('(max-width:650px)').matches?28:32;}
 const DETAIL_ZOOM_MIN=16,DETAIL_ZOOM_MAX=64,DETAIL_ZOOM_STEP=4;
 const detailZoomMobile=()=>window.matchMedia('(max-width:650px)').matches;
-// Desktop: passa in den längsta periodens dagar på den synliga bredden.
-// Samtliga perioder använder samma pixelbredd så att stopplängder är jämförbara.
-let detailZoomMode=(()=>{try{return localStorage.getItem('planbrow-detail-zoom-mode')==='manual'?'manual':detailZoomMobile()?'manual':'fit';}catch{return detailZoomMobile()?'manual':'fit';}})();
-let detailZoomWidth=(()=>{try{const x=Number(localStorage.getItem('planbrow-detail-day-width'));return x>=DETAIL_ZOOM_MIN&&x<=DETAIL_ZOOM_MAX?x:detailZoomDefault();}catch{return detailZoomDefault();}})();
-function detailDayWidth(){return detailZoomWidth;}
-function detailFitWidth(settings){
- const periods=validatePeriods(settings.periods),longest=Math.max(1,...periods.map(p=>p.to-p.from+1));
- const units=longest*(settings.scale==='week'?1:7);
+const detailPeriodZoom=new Map();
+function detailZoomKey(year,p){return [board?.id||'',year,p.name,p.from,p.to].join('|');}
+function detailZoomStored(key){
+ try{const obj=JSON.parse(localStorage.getItem('planbrow-period-zoom')||'{}');const val=obj[key];
+  if(val&&['fit','manual'].includes(val.mode)&&Number.isFinite(val.width))return {mode:val.mode,width:Math.max(DETAIL_ZOOM_MIN,Math.min(DETAIL_ZOOM_MAX,val.width))};
+ }catch{}return null;
+}
+function detailZoomFor(year,p){const key=detailZoomKey(year,p);
+ if(!detailPeriodZoom.has(key))detailPeriodZoom.set(key,detailZoomStored(key)||{mode:detailZoomMobile()?'manual':'fit',width:detailZoomDefault()});
+ return detailPeriodZoom.get(key);
+}
+function detailSaveZoom(key,state){
+ try{const obj=JSON.parse(localStorage.getItem('planbrow-period-zoom')||'{}');obj[key]={mode:state.mode,width:state.width};
+  const keys=Object.keys(obj);if(keys.length>120)keys.slice(0,keys.length-120).forEach(k=>delete obj[k]);
+  localStorage.setItem('planbrow-period-zoom',JSON.stringify(obj));
+ }catch{}
+}
+function detailFitWidth(period,scale){
+ const units=Math.max(1,(period.to-period.from+1)*(scale==='week'?1:7));
  const viewport=$('year-timeline').clientWidth;
- if(!viewport)return detailZoomWidth;
- const fixedLabel=detailZoomMobile()?120:195;
- const available=Math.max(0,viewport-fixedLabel-3);
- // Begränsa storleken när en period bara är någon enstaka vecka.
- // Är perioden lång får användaren scrolla i stället för att dagarna blir oläsliga.
- const maxUnitWidth=settings.scale==='week'?DETAIL_ZOOM_MAX*2:DETAIL_ZOOM_MAX;
- const minUnitWidth=settings.scale==='week'?DETAIL_ZOOM_MIN*2:DETAIL_ZOOM_MIN;
- const calculated=Math.max(minUnitWidth,Math.min(maxUnitWidth,Math.floor(available/units)));
- return settings.scale==='week'?Math.round(calculated/2):calculated;
+ if(!viewport)return detailZoomDefault();
+ const fixed=detailZoomMobile()?120:195;
+ const available=Math.max(0,viewport-fixed-4);
+ const factor=scale==='week'?2:1;
+ return Math.max(DETAIL_ZOOM_MIN,Math.min(DETAIL_ZOOM_MAX,Math.floor(available/units/factor)));
 }
-function detailUpdateFitWidth(settings){
- if(detailZoomMode==='fit'&&!detailZoomMobile())detailZoomWidth=detailFitWidth(settings);
+function detailEffectiveZoom(year,p,settings){
+ const state=detailZoomFor(year,p);
+ return state.mode==='fit'&&!detailZoomMobile()?detailFitWidth(p,settings.scale):state.width;
 }
-function syncDetailZoomUI(){
- const fit=detailZoomMode==='fit'&&!detailZoomMobile();
- const value=Math.round(detailZoomWidth/detailZoomDefault()*100);
- $('year-zoom-label').textContent=(fit?'Auto · ':'')+value+' %';
- $('year-zoom-out').disabled=detailZoomWidth<=DETAIL_ZOOM_MIN;
- $('year-zoom-in').disabled=detailZoomWidth>=DETAIL_ZOOM_MAX;
- $('year-zoom-fit').disabled=fit;
- $('year-zoom-reset').disabled=fit||(!fit&&detailZoomMobile()&&detailZoomWidth===detailZoomDefault());
- $('year-zoom-controls').hidden=$('year-view').value!=='timeline';
+function detailPeriodScrollPosition(section){
+ const scroll=section?.querySelector('.detail-period-scroll'),inner=section?.querySelector('.detail-period-inner');if(!scroll||!inner)return 0;
+ const width=parseFloat(inner.style.getPropertyValue('--dayw'))||detailZoomDefault();
+ const factor=section.dataset.scale==='week'?2:1;
+ const fixed=inner.querySelector('.detail-fixed-label')?.getBoundingClientRect().width||(detailZoomMobile()?120:195);
+ return Math.max(0,(scroll.scrollLeft+scroll.clientWidth/2-fixed)/(width));
 }
-function detailZoomPositions(){return [...$('year-timeline').querySelectorAll('.detail-period-scroll')].map(s=>{
- const fixed=s.querySelector('.detail-fixed-label')?.getBoundingClientRect().width||(detailZoomMobile()?120:195);
- return {index:s.closest('.detail-period')?.dataset.periodIndex,day:(s.scrollLeft+s.clientWidth/2-fixed)/Math.max(1,detailZoomWidth)};
-});}
-function detailRestoreZoomPositions(positions){
- for(const pos of positions){const section=[...$('year-timeline').querySelectorAll('.detail-period')].find(x=>x.dataset.periodIndex===pos.index),scroll=section?.querySelector('.detail-period-scroll');
- if(!scroll)continue;const fixed=scroll.querySelector('.detail-fixed-label')?.getBoundingClientRect().width||(detailZoomMobile()?120:195);
- scroll.scrollLeft=Math.max(0,fixed+pos.day*detailZoomWidth-scroll.clientWidth/2);
- }}
-function detailPersistZoom(){try{localStorage.setItem('planbrow-detail-zoom-mode',detailZoomMode);localStorage.setItem('planbrow-detail-day-width',String(detailZoomWidth));}catch{}}
-function updateDetailZoom(next,mode='manual'){
- const positions=detailZoomPositions();const old=detailZoomWidth,prevMode=detailZoomMode;
- detailZoomMode=mode;
- if(mode==='fit'&&!detailZoomMobile()&&detailYear){
-  const year=Number(rows.find(r=>r.id===detailYear)?.label);
-  detailZoomWidth=detailFitWidth(validateWeekRange(yearSettings(String(year))));
- }else detailZoomWidth=Math.min(DETAIL_ZOOM_MAX,Math.max(DETAIL_ZOOM_MIN,next));
- detailPersistZoom();
- if((old!==detailZoomWidth||prevMode!==detailZoomMode)&&detailYear&&$('year-view').value==='timeline'){
-  renderDetailYear();detailRestoreZoomPositions(positions);
- }else syncDetailZoomUI();
+function detailRestorePeriodScroll(section,at){
+ const scroll=section?.querySelector('.detail-period-scroll'),inner=section?.querySelector('.detail-period-inner');if(!scroll||!inner)return;
+ const width=parseFloat(inner.style.getPropertyValue('--dayw'))||detailZoomDefault();
+ const fixed=inner.querySelector('.detail-fixed-label')?.getBoundingClientRect().width||(detailZoomMobile()?120:195);
+ scroll.scrollLeft=Math.max(0,at*width+fixed-scroll.clientWidth/2);
 }
-$('year-zoom-out').onclick=()=>updateDetailZoom(detailZoomWidth-DETAIL_ZOOM_STEP);
-$('year-zoom-in').onclick=()=>updateDetailZoom(detailZoomWidth+DETAIL_ZOOM_STEP);
-$('year-zoom-fit').onclick=()=>updateDetailZoom(detailZoomWidth,'fit');
-$('year-zoom-reset').onclick=()=>updateDetailZoom(detailZoomDefault(),detailZoomMobile()?'manual':'fit');
-// Justera anpassad dagsbredd vid fönsterbyte, utan att ändra planeringens datum.
+function detailPeriodZoomControls(section,p,settings,year){
+ const key=detailZoomKey(year,p),state=detailZoomFor(year,p);
+ const controls=el('div','detail-period-zoom');controls.setAttribute('role','group');controls.setAttribute('aria-label','Zoom för '+p.name);
+ const minus=el('button','','−'),label=el('output'),plus=el('button','','+'),fit=el('button','','⛶ Anpassa'),reset=el('button','','↺ Återställ');
+ for(const b of [minus,plus,fit,reset])b.type='button';
+ minus.title='Zooma ut i '+p.name;plus.title='Zooma in i '+p.name;fit.title='Anpassa denna period till skärmens bredd';
+ reset.title='Återgå till automatisk anpassning på dator eller normalzoom på mobil';
+ function paint(){const width=detailEffectiveZoom(year,p,settings),isFit=state.mode==='fit'&&!detailZoomMobile();
+  label.textContent=(isFit?'Auto · ':'')+Math.round(width/detailZoomDefault()*100)+' %';
+  minus.disabled=width<=DETAIL_ZOOM_MIN;plus.disabled=width>=DETAIL_ZOOM_MAX;
+  fit.disabled=isFit;reset.disabled=isFit||(!isFit&&detailZoomMobile()&&width===detailZoomDefault());
+ }
+ function change(mode,width){const oldPosition=detailPeriodScrollPosition(section);
+  state.mode=mode;state.width=Math.max(DETAIL_ZOOM_MIN,Math.min(DETAIL_ZOOM_MAX,width));detailSaveZoom(key,state);
+  const nextWidth=detailEffectiveZoom(year,p,settings);
+  const dayW=settings.scale==='week'?nextWidth*2:nextWidth;
+  section.querySelector('.detail-period-inner')?.style.setProperty('--dayw',dayW+'px');
+  // Ren CSS-zoom: behåll DOM och drag-händelser; inga datum i databasen ändras.
+  requestAnimationFrame(()=>detailRestorePeriodScroll(section,oldPosition));paint();
+ }
+ minus.onclick=()=>change('manual',detailEffectiveZoom(year,p,settings)-DETAIL_ZOOM_STEP);
+ plus.onclick=()=>change('manual',detailEffectiveZoom(year,p,settings)+DETAIL_ZOOM_STEP);
+ fit.onclick=()=>change(detailZoomMobile()?'manual':'fit',detailZoomMobile()?detailZoomDefault():state.width);
+ reset.onclick=()=>change(detailZoomMobile()?'manual':'fit',detailZoomDefault());
+ controls.append(minus,label,plus,fit,reset);paint();return controls;
+}
+// Varje periods anpassade bredd uppdateras vid ändrad fönsterstorlek.
 let detailFitResizeTimer=0;
 window.addEventListener('resize',()=>{
- if(!detailYear||detailZoomMode!=='fit'||detailZoomMobile()||$('year-view').value!=='timeline')return;
- clearTimeout(detailFitResizeTimer);
- detailFitResizeTimer=setTimeout(()=>{
-  if(!detailYear||detailZoomMode!=='fit')return;
-  const year=Number(rows.find(r=>r.id===detailYear)?.label),next=detailFitWidth(validateWeekRange(yearSettings(String(year))));
-  if(next===detailZoomWidth)return;
-  const positions=detailZoomPositions();detailZoomWidth=next;renderDetailYear();detailRestoreZoomPositions(positions);
+ if(!detailYear||$('year-view').value!=='timeline')return;
+ clearTimeout(detailFitResizeTimer);detailFitResizeTimer=setTimeout(()=>{
+  const year=Number(rows.find(r=>r.id===detailYear)?.label),settings=validateWeekRange(yearSettings(String(year)));
+  const periods=validatePeriods(settings.periods).sort((a,b)=>a.from-b.from);
+  $('year-timeline').querySelectorAll('.detail-period').forEach(section=>{
+   const p=periods[Number(section.dataset.periodIndex)];if(!p)return;
+   const state=detailZoomFor(year,p);if(state.mode!=='fit'||detailZoomMobile())return;
+   const pos=detailPeriodScrollPosition(section);
+   const w=detailEffectiveZoom(year,p,settings)*(settings.scale==='week'?2:1);
+   section.querySelector('.detail-period-inner')?.style.setProperty('--dayw',w+'px');
+   requestAnimationFrame(()=>detailRestorePeriodScroll(section,pos));
+   const label=section.querySelector('.detail-period-zoom output');if(label)label.textContent='Auto · '+Math.round(w/(settings.scale==='week'?2:1)/detailZoomDefault()*100)+' %';
+  });
  },120);
 });
 function parseIsoDate(str){if(!/^\d{4}-\d\d-\d\d$/.test(str||''))return null;const d=new Date(str+'T00:00:00Z');return Number.isNaN(d.getTime())?null:d;}
@@ -830,7 +848,7 @@ function yearColor(card){return fieldColor(card);}
 function makeYearEdit(card){const b=el('button','year-row-edit',card.title);b.type='button';b.onclick=()=>editYearActivity(card.id);return b;}
 function renderDetailYear(){if(!detailYear||!board)return;const r=rows.find(x=>x.id===detailYear);if(!r){leaveDetailYear();return;}const year=Number(r.label);const settings=validateWeekRange(yearSettings(String(year)));const view=detailViewOverride||settings.view;
  $('year-title').textContent=r.label+' – Detaljplanering';$('year-crumb').textContent=(board.name||'Tavla')+' / '+r.label;
- $('year-view').value=view;$('year-timeline').hidden=view!=='timeline';$('year-list').hidden=view!=='list';if(view==='timeline')detailUpdateFitWidth(settings);syncDetailZoomUI();
+ $('year-view').value=view;$('year-timeline').hidden=view!=='timeline';$('year-list').hidden=view!=='list';$('year-zoom-controls').hidden=true; // Individuella zoomkontroller finns i varje periodrubrik.
  const catField=fields.find(f=>f.color_source)||fields.find(f=>f.is_primary);
  const select=$('year-filter'),previous=select.value;select.replaceChildren();const all=el('option','','Alla kategorier');all.value='';select.append(all);
  if(catField){for(const opt of (catField.options||[])){const x=el('option','',opt.label);x.value=opt.label;select.append(x);}}if([...select.options].some(x=>x.value===previous))select.value=previous;
@@ -889,13 +907,13 @@ function renderYearTimeline(arr,settings,year){
  const untimed=arr.filter(c=>!planned.includes(c));
  for(const [idx,p] of periods.entries()){
   const countWeeks=p.to-p.from+1,fromDate=mondayOfISOWeek(year,p.from),toDate=incrementDay(mondayOfISOWeek(year,p.to),6),numDays=countWeeks*(settings.scale==='week'?1:7);
-  const section=el('section','detail-period');section.dataset.periodIndex=String(idx);
-  const head=el('div','detail-period-header');head.append(el('h3','',p.name+' · v'+p.from+'–v'+p.to),el('span','','Planering '+year));section.append(head);
+  const section=el('section','detail-period');section.dataset.periodIndex=String(idx);section.dataset.scale=settings.scale;
+  const head=el('div','detail-period-header');head.append(el('h3','',p.name+' · v'+p.from+'–v'+p.to),detailPeriodZoomControls(section,p,settings,year),el('span','detail-period-year','Planering '+year));section.append(head);
   const scroll=el('div','detail-period-scroll');const inner=el('div','detail-period-inner');inner.style.setProperty('--days',numDays);
-  inner.style.setProperty('--dayw',settings.scale==='week'?(detailDayWidth()*2)+'px':detailDayWidth()+'px');
+  const unitZoom=detailEffectiveZoom(year,p,settings);inner.style.setProperty('--dayw',(settings.scale==='week'?unitZoom*2:unitZoom)+'px');
   const weekRow=el('div','detail-week-row');weekRow.append(el('div','detail-fixed-label','Linje / aktivitet'));
   for(let w=p.from;w<=p.to;w++){const span=el('div','detail-week-head','v'+w);span.style.gridColumn=(2+(w-p.from)*(settings.scale==='week'?1:7))+' / span '+(settings.scale==='week'?1:7);weekRow.append(span);}inner.append(weekRow);
-  if(settings.scale!=='week'){const days=el('div','detail-day-row');days.append(el('div','detail-fixed-label','Veckodag'));for(let d=0;d<numDays;d++){const date=incrementDay(fromDate,d);const mark=el('div','detail-day-head'+(d%7>=5?' weekend':''),['M','T','O','T','F','L','S'][d%7]+' '+date.getUTCDate());mark.style.gridColumn=String(d+2);days.append(mark);}inner.append(days);}
+  if(settings.scale!=='week'){const days=el('div','detail-day-row');days.append(el('div','detail-fixed-label','Veckodag'));for(let d=0;d<numDays;d++){const date=incrementDay(fromDate,d);const mark=el('div','detail-day-head'+(d%7>=5?' weekend':''));mark.append(el('span','detail-weekday-letter',['M','T','O','T','F','L','S'][d%7]),el('span','detail-day-number',String(date.getUTCDate())));mark.style.gridColumn=String(d+2);days.append(mark);}inner.append(days);}
   let shown=0;
   let currentGroup=null;
   for(const card of detailSortCards(planned)){const area=detailArea(card);const meta=detailCardInfo(card),begin=isoUTC(meta.start),finish=isoUTC(meta.end);if(finish<fromDate||begin>toDate)continue;
