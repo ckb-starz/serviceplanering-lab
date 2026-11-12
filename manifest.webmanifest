@@ -1,21 +1,21 @@
 {
-  "name": "PlanBroW",
-  "short_name": "PlanBroW",
+  "name": "PlanBro",
+  "short_name": "PlanBro",
   "description": "Flexibla tavlor för planering",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f4f7fb",
-  "theme_color": "#112f53",
+  "background_color": "#F6FAF8",
+  "theme_color": "#009969",
   "icons": [
     {
-      "src": "./icon-192.png?v=2.7.4",
+      "src": "./icon-192.png?v=2.8.0",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "./icon-512.png?v=2.7.4",
+      "src": "./icon-512.png?v=2.8.0",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"

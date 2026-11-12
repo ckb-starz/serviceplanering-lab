@@ -1,0 +1,7 @@
+PlanBro 2.8.0 – Åbro-inspirerat grön/mint-tema.
+
+Uppdatera filerna i GitHub Pages från denna mapp.
+Alla existerande funktioner, lagrade inställningsnycklar och Supabase-tabeller behålls.
+Färger: #009969 och #E0F3ED; loggan bygger på den utvalda grönvita bilden.
+Ingen SQL behövs.
+Om ikonen inte uppdateras: ta bort och lägg tillbaka hemskärmsgenvägen.

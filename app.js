@@ -338,7 +338,7 @@ function loadPDFLibrary(){
  return pdfLibPromise;
 }
 function pdfText(value){return String(value??'').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g,'').trim();}
-function pdfSafeName(name){return pdfText(name).replace(/[\\/:*?"<>|]/g,'-').replace(/\s+/g,'_').slice(0,70)||'PlanBroW';}
+function pdfSafeName(name){return pdfText(name).replace(/[\\/:*?"<>|]/g,'-').replace(/\s+/g,'_').slice(0,70)||'PlanBro';}
 function pdfMakeCard(card,options,baseFont){
  const printMode=options.theme==='print';
  const [paper,accent]=fieldColor(card);
@@ -397,9 +397,9 @@ function pdfBoardDefinition(options){
   pageMargins:[28,32,28,36],
   defaultStyle:{font:'Roboto',fontSize:fs,color:'#17314e'},
   styles:{docTitle:{fontSize:Math.max(18,fs+10),bold:true,color:'#173555'},rowTitle:{fontSize:Math.max(12,fs+3),bold:true,color:'#213e5d'}},
-  footer:(current,total)=>({text:`PlanBroW  •  ${current} / ${total}`,fontSize:8,color:'#7b8a9a',alignment:'right',margin:[0,0,30,0]}),
+  footer:(current,total)=>({text:`PlanBro  •  ${current} / ${total}`,fontSize:8,color:'#7b8a9a',alignment:'right',margin:[0,0,30,0]}),
   content,
-  info:{title:pdfText(board.name)||'PlanBroW',subject:'Exporterad planering från PlanBroW',creator:'PlanBroW 2.5.1'}
+  info:{title:pdfText(board.name)||'PlanBro',subject:'Exporterad planering från PlanBro',creator:'PlanBro 2.5.1'}
  };
 }
 $('export-pdf').onclick=()=>{
@@ -700,7 +700,7 @@ $('register-form').onsubmit=async e=>{e.preventDefault();const email=$('register
 $('button-forgot').onclick=()=>{$('forgot-email').value=$('email').value.trim();feedback('forgot-feedback','');openDialogQuietly($('forgot-dialog'));};
 $('forgot-form').onsubmit=async e=>{e.preventDefault();const btn=e.submitter;btn.disabled=true;feedback('forgot-feedback','Skickar…');try{const {error}=await sb.auth.resetPasswordForEmail($('forgot-email').value.trim(),{redirectTo:window.location.origin+window.location.pathname});if(error)throw error;feedback('forgot-feedback','Om adressen har ett konto skickas ett återställningsmejl. Kontrollera även skräpposten.');}catch(x){feedback('forgot-feedback','Kunde inte skicka mejlet: '+err(x),true);}finally{btn.disabled=false;}};
 $('recovery-form').onsubmit=async e=>{e.preventDefault();const password=$('recovery-password').value;if(password!==$('recovery-confirm').value){feedback('recovery-feedback','Lösenorden matchar inte.',true);return;}const btn=e.submitter;btn.disabled=true;feedback('recovery-feedback','Sparar…');try{const {error}=await sb.auth.updateUser({password});if(error)throw error;feedback('recovery-feedback','Lösenordet är ändrat! Logga in med det nya lösenordet.');$('recovery-password').value='';$('recovery-confirm').value='';recoveryMode=false;history.replaceState(null,'',window.location.pathname);await sb.auth.signOut();setTimeout(()=>{$('recovery-dialog').close();showOnly('auth');feedback('auth-feedback','Lösenordet är uppdaterat. Logga in med ditt nya lösenord.');},300);}catch(x){feedback('recovery-feedback',err(x),true);}finally{btn.disabled=false;}};
-/* PlanBroW 2.6.1 – veckoperioder kan anpassas per år. */
+/* PlanBro 2.6.1 – veckoperioder kan anpassas per år. */
 const BASE_PERIODS=[{name:'Vårservice',from:5,to:10,columnId:''},{name:'Höstservice',from:40,to:46,columnId:''}];
 const DETAIL_DEFAULTS={view:'timeline',scale:'day',periods:BASE_PERIODS};
 function copyPeriods(arr){return (Array.isArray(arr)?arr:BASE_PERIODS).map(p=>({name:String(p.name||'Period'),from:Number(p.from),to:Number(p.to),columnId:String(p.columnId||'')}));}
@@ -948,7 +948,7 @@ function renderYearTimeline(arr,settings,year){
 }
 function renderYearList(arr,year){const host=$('year-list');host.replaceChildren();const table=el('table');const head=el('thead');const tr=el('tr');for(const text of ['Aktivitet','Kategori','Vecka','Start','Slut','Längd / stopptid','Status'])tr.append(el('th','',text));head.append(tr);table.append(head);const body=el('tbody');const catField=fields.find(f=>f.color_source)||fields.find(f=>f.is_primary);
  for(const card of detailSortCards(arr)){const info=detailCardInfo(card),tr=el('tr');const first=el('td');first.append(makeYearEdit(card));tr.append(first);for(const val of [card.values_json?.[catField?.id]||'—',weekLabel(info),info.start||'—',info.end||'—',info.downtime!==''?info.downtime+' '+info.unit:'—',info.status])tr.append(el('td','',val));body.append(tr);}table.append(body);host.append(table);if(!arr.length)host.append(el('p','muted','Inga aktiviteter matchar filtret.'));}
-/* PlanBroW 2.6.3 — Interaktiv tidssättning, flytt och storleksändring på tidslinjen.
+/* PlanBro 2.6.3 — Interaktiv tidssättning, flytt och storleksändring på tidslinjen.
    Samma pd_cards-post används alltid. Datumen sparas först vid släpp. */
 let detailHover=null;
 function detailHoverHide(){detailHover?.remove();detailHover=null;}
@@ -1167,7 +1167,7 @@ area.addEventListener('touchend',()=>{if(startY!==null&&pull>65)reloadBoard().ca
 try{const saved=JSON.parse(localStorage.getItem(CONN)||'null');if(saved?.url&&saved?.key){$('url').value=saved.url;$('key').value=saved.key;connect(saved.url,saved.key).catch(e=>{showOnly('config');info(err(e));});}else{showOnly('config');$('url').value='https://huxqiwgvsjedjlaaztif.supabase.co';}}catch(e){showOnly('config');info(err(e));}
 
 
-// PlanBroW 2.7.2 – manuell import från MaintMaster. Endast lokalt filval -> förhandsgranskning -> aktiv tavla.
+// PlanBro 2.7.2 – manuell import från MaintMaster. Endast lokalt filval -> förhandsgranskning -> aktiv tavla.
 let mmImportRows=[],mmImportBoardId=null,mmXlsxLoader=null;
 const MM_COLUMNS=['Nummer','Typ','Ansvarig Avdelning','Huvudobjekt','Anläggningsobjekt','Rubrik','Start','Slut','Ansvarig','Support','Riskbedömning utförd?','Status','Kommentar'];
 const MM_FIELD_NAMES={Nummer:'AO-nummer',Typ:'Typ','Ansvarig Avdelning':'Ansvarig avdelning',Huvudobjekt:'Huvudobjekt','Anläggningsobjekt':'Anläggningsobjekt',Ansvarig:'Ansvarig',Support:'Support','Riskbedömning utförd?':'Riskbedömning utförd?',Status:'Status',Kommentar:'Kommentar'};
